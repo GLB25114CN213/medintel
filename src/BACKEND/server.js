@@ -44,8 +44,11 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
     console.log("📄 File received:", req.file.originalname);
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-    });
+  model: "gemini-1.5-flash",
+  generationConfig: {
+    responseMimeType: "application/json",
+  },
+});
 
     const imageBuffer = fs.readFileSync(req.file.path);
 
@@ -123,6 +126,36 @@ Example format:
     ]);
 
     const response = result.response.text();
+    let response = result.response.text();
+
+response = response
+  .replace(/```json/g, "")
+  .replace(/```/g, "")
+  .trim();
+
+let parsed;
+
+try {
+  parsed = JSON.parse(response);
+} catch (jsonError) {
+  console.error("❌ Invalid JSON from Gemini:");
+  console.log(response);
+
+  return res.status(500).json({
+    success: false,
+    error: "Gemini returned invalid JSON",
+    raw: response,
+  });
+}
+
+console.log("✅ Analysis complete");
+
+fs.unlinkSync(req.file.path);
+
+res.json({
+  success: true,
+  analysis: parsed,
+});
 
     console.log("✅ Analysis complete");
 
