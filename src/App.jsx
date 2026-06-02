@@ -69,84 +69,108 @@ export default function MedIntelAI() {
 
   // Analyze Reports with Simulated Data
   const handleAnalyze = async () => {
-    if (reports.length === 0) return;
-    setLoading(true);
-    
-    // Simulate API call with timeout
-    setTimeout(() => {
-      const mockAnalysis = {
-        patientInfo: {
-          age: '45-55',
-          gender: 'Not specified',
-          testDate: new Date().toLocaleDateString()
-        },
-        biomarkers: [
-          { name: 'Hemoglobin', value: 13.2, unit: 'g/dL', normalRange: '13.5-17.5', status: 'low', significance: 'May indicate mild anemia or nutritional deficiency', recommendation: 'Increase iron intake through diet or supplements' },
-          { name: 'Vitamin D', value: 18, unit: 'ng/mL', normalRange: '30-100', status: 'low', significance: 'Deficiency affects bone health and immunity', recommendation: 'Increase sun exposure and vitamin D intake' },
-          { name: 'LDL Cholesterol', value: 145, unit: 'mg/dL', normalRange: '<100', status: 'high', significance: 'Elevated cardiovascular risk', recommendation: 'Reduce saturated fats and increase exercise' },
-          { name: 'HDL Cholesterol', value: 42, unit: 'mg/dL', normalRange: '>40', status: 'borderline', significance: 'Could be higher for better heart health', recommendation: 'Increase aerobic exercise' },
-          { name: 'Blood Glucose', value: 95, unit: 'mg/dL', normalRange: '70-100', status: 'normal', significance: 'Within normal fasting range', recommendation: 'Maintain current lifestyle' },
-          { name: 'Triglycerides', value: 120, unit: 'mg/dL', normalRange: '<150', status: 'normal', significance: 'Good fat metabolism', recommendation: 'Continue healthy diet' }
-        ],
-        healthScore: 62,
-        riskLevel: 'moderate',
-        summaryPatientFriendly: 'Your overall health is good, but there are a few areas needing attention. Your vitamin D is low, which can affect your bones and immunity. Your cholesterol is slightly elevated. These are manageable through diet and lifestyle changes.',
-        summaryTechnical: 'Mild anemia detected. Vitamin D deficiency present. LDL cholesterol elevated with borderline HDL. Glucose metabolism normal. Metabolic health generally good.',
-        alerts: [
-          { title: 'Vitamin D Deficiency', severity: 'warning', value: '18 ng/mL' },
-          { title: 'LDL Cholesterol Elevated', severity: 'warning', value: '145 mg/dL' },
-          { title: 'Hemoglobin Low', severity: 'warning', value: '13.2 g/dL' }
-        ],
-        recommendations: {
-          lifestyle: [
-            '30 minutes of moderate exercise daily',
-            '7-8 hours of quality sleep each night',
-            'Stress management through meditation or yoga',
-            'Limit processed and fried foods'
-          ],
-          nutrition: [
-            'Iron-rich foods: spinach, lentils, red meat, pumpkin seeds',
-            'Vitamin D sources: fatty fish, egg yolks, fortified milk',
-            'Reduce saturated fats: limit butter and full-fat dairy',
-            'Increase fiber: whole grains, beans, vegetables'
-          ],
-          supplements: [
-            'Vitamin D3: 1000-2000 IU daily',
-            'Iron supplement if anemia confirmed',
-            'Omega-3 supplements for cholesterol'
-          ],
-          followUpTests: [
-            'Repeat Vitamin D test in 3 months',
-            'Lipid panel in 6-8 weeks',
-            'Complete blood count in 6 months',
-            'Fasting glucose test in 3 months'
-          ]
-        },
-        doctorQuestions: [
-          'Should I take Vitamin D supplements? If so, what dosage?',
-          'What specific dietary changes would help lower my cholesterol?',
-          'Is my low hemoglobin concerning or due to dietary deficiency?',
-          'Do I need any medications at this time?',
-          'How often should I get these tests repeated?'
-        ],
-        trendData: [
-          { date: 'Jan', hemoglobin: 12.8, glucose: 98, ldl: 150, vitaminD: 15 },
-          { date: 'Feb', hemoglobin: 13.0, glucose: 96, ldl: 148, vitaminD: 17 },
-          { date: 'Mar', hemoglobin: 13.2, glucose: 95, ldl: 145, vitaminD: 18 },
-          { date: 'Apr', hemoglobin: 13.5, glucose: 93, ldl: 142, vitaminD: 20 }
-        ],
-        healthScoreTrend: [
-          { month: 'Jan', score: 58 },
-          { month: 'Feb', score: 60 },
-          { month: 'Mar', score: 62 },
-          { month: 'Apr', score: 65 }
-        ]
-      };
-      setAnalysisResults(mockAnalysis);
-      setCurrentPage('analysis');
+  if (reports.length === 0) {
+    alert("Upload a medical report first");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const formData = new FormData();
+
+    formData.append("file", reports[0].file);
+
+    const response = await fetch("http://localhost:5000/analyze", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    console.log("AI RESPONSE:", data);
+
+    if (!data.success) {
+      alert(data.error || "Analysis failed");
       setLoading(false);
-    }, 2000);
-  };
+      return;
+    }
+
+    // INVALID REPORT
+    if (data.analysis?.isMedicalReport === false) {
+      alert("Invalid medical report.");
+      setLoading(false);
+      return;
+    }
+
+    // CONVERT GEMINI RESPONSE TO UI FORMAT
+    const convertedAnalysis = {
+      patientInfo: {
+        age: data.analysis.age || "Unknown",
+        gender: data.analysis.gender || "Unknown",
+        testDate: new Date().toLocaleDateString(),
+      },
+
+      biomarkers:
+        data.analysis.biomarkers?.map((b) => ({
+          name: b.name,
+          value: b.value,
+          unit: b.unit,
+          normalRange: b.normalRange,
+          status: b.status,
+          significance: b.interpretation,
+          recommendation: b.recommendation,
+        })) || [],
+
+      healthScore: data.analysis.healthScore || 70,
+
+      riskLevel: data.analysis.riskLevel || "moderate",
+
+      summaryPatientFriendly:
+        data.analysis.simpleExplanation ||
+        "Medical analysis completed.",
+
+      summaryTechnical:
+        data.analysis.professionalExplanation ||
+        "Detailed analysis completed.",
+
+      alerts:
+        data.analysis.abnormalFindings?.map((a) => ({
+          title: a.name,
+          severity: "warning",
+          value: a.value,
+        })) || [],
+
+      recommendations: {
+        lifestyle: data.analysis.lifestyleRecommendations || [],
+        nutrition: data.analysis.dietRecommendations || [],
+        supplements: data.analysis.supplementRecommendations || [],
+        followUpTests: data.analysis.followUpTests || [],
+      },
+
+      doctorQuestions:
+        data.analysis.doctorQuestions || [],
+
+      trendData: [],
+
+      healthScoreTrend: [],
+    };
+
+    setAnalysisResults(convertedAnalysis);
+
+    setCurrentPage("analysis");
+
+  } catch (error) {
+    console.error(error);
+
+    alert("Server error while analyzing report");
+
+  } finally {
+    setLoading(false);
+  }
+};
+   
+  
 
   // Chat Handler
   const sendMessage = () => {
@@ -685,3 +709,4 @@ export default function MedIntelAI() {
     </div>
   );
 }
+
