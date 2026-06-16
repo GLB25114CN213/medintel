@@ -41,8 +41,28 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
     }
 
     console.log("📄 File received:", req.file.originalname);
+const result = await genAI.models.generateContent({
+  model: "gemini-2.5-flash",
+  contents: [
+    {
+      role: "user",
+      parts: [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: imagePart.inlineData.mimeType,
+            data: imagePart.inlineData.data,
+          },
+        },
+      ],
+    },
+  ],
+  config: {
+    responseMimeType: "application/json",
+  },
+});
 
-  const modelName = "gemini-2.5-flash"; 
+let responseText = result.text;
 
     ;
 
