@@ -3,7 +3,7 @@ import cors from "cors";
 import multer from "multer";
 import fs from "fs";
 import dotenv from "dotenv";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 
 dotenv.config();
@@ -24,8 +24,7 @@ if (!apiKey) {
   console.log("❌ GEMINI_API_KEY missing in .env");
   process.exit(1);
 }
-
-const genAI = new GoogleGenerativeAI(apiKey);
+const genAI = new GoogleGenAI({ apiKey });
 console.log("✅ Gemini initialized");
 
 app.get("/", (req, res) => {
@@ -43,12 +42,8 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
 
     console.log("📄 File received:", req.file.originalname);
 
-    const model = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash",
-  generationConfig: {
-    responseMimeType: "application/json",
-  },
-});
+  const modelName = "gemini-2.5-flash"; 
+
     ;
 
    let processedBuffer;
@@ -182,10 +177,28 @@ Use this exact JSON format:
 
     console.log("🧠 Sending to Gemini...");
 
-    const result = await model.generateContent([prompt, imagePart]);
+    const result = await genAI.models.generateContent({
+  model: modelName,
+  contents: [
+    {
+      role: "user",
+      parts: [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: imagePart.inlineData.mimeType,
+            data: imagePart.inlineData.data,
+          },
+        },
+      ],
+    },
+  ],
+  config: {
+    responseMimeType: "application/json",
+  },
+});
 
-    // ✅ FIX: Only declare ONCE
-    let responseText = result.response.text();
+let responseText = result.text;
 
     // ✅ FIX: Clean up JSON
     responseText = responseText
