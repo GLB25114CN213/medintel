@@ -96,10 +96,13 @@ export default function MedIntelAI() {
 
     formData.append("file", reports[0].file);
 
-    const response = await fetch("http://localhost:5000/analyze", {
-      method: "POST",
-      body: formData,
-    });
+    const response = await fetch(
+  "https://medintel-backend-o74v.onrender.com/analyze",
+  {
+    method: "POST",
+    body: formData,
+  }
+);
 
     const data = await response.json();
 
