@@ -16,7 +16,7 @@ app.use(express.json());
 const upload = multer({
   dest: "uploads/",
 });
-
+console.log("KEY STARTS WITH:", apiKey?.substring(0, 10));
 const apiKey = process.env.GEMINI_API_KEY;
 
 if (!apiKey) {
