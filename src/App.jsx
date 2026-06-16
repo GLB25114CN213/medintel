@@ -68,6 +68,21 @@ export default function MedIntelAI() {
   };
 
   // Analyze Reports with Simulated Data
+  const calculateHealthScore = (biomarkers = []) => {
+  let score = 100;
+
+  biomarkers.forEach((b) => {
+    const status = String(b.status || "").toLowerCase();
+
+    if (status.includes("critical") || status.includes("very high")) {
+      score -= 25;
+    } else if (status.includes("high") || status.includes("low") || status.includes("abnormal")) {
+      score -= 12;
+    }
+  });
+
+  return Math.max(0, Math.min(100, score));
+};
   const handleAnalyze = async () => {
   if (reports.length === 0) {
     alert("Upload a medical report first");
@@ -110,19 +125,53 @@ export default function MedIntelAI() {
         gender: data.analysis.gender || "Unknown",
         testDate: new Date().toLocaleDateString(),
       },
+healthScore:
+    Number(data.analysis.healthScore) > 0
+      ? Number(data.analysis.healthScore)
+      : calculateHealthScore(data.analysis.biomarkers),
 
-      biomarkers:
-        data.analysis.biomarkers?.map((b) => ({
-          name: b.name,
-          value: b.value,
-          unit: b.unit,
-          normalRange: b.normalRange,
-          status: b.status,
-          significance: b.interpretation,
-          recommendation: b.recommendation,
-        })) || [],
+  healthScoreReason:
+    data.analysis.healthScoreReason ||
+    "Score calculated from abnormal biomarkers detected in the report.",
 
-      healthScore: data.analysis.healthScore || 70,
+    biomarkers:
+  data.analysis.biomarkers?.map((b) => {
+
+    let calculatedStatus = "normal";
+
+    const value = parseFloat(b.value);
+
+    if (b.normalRange) {
+      const nums = b.normalRange.match(/\d+(\.\d+)?/g);
+
+      if (nums && nums.length >= 2) {
+        const min = parseFloat(nums[0]);
+        const max = parseFloat(nums[1]);
+
+        if (value < min) {
+          calculatedStatus = "low";
+        } else if (value > max) {
+          calculatedStatus = "high";
+        }
+      }
+    }
+
+    return {
+      name: b.name,
+      value: b.value,
+      unit: b.unit,
+      normalRange: b.normalRange,
+      status: calculatedStatus,
+      significance: b.meaning,
+      recommendation: b.recommendation || "",
+    };
+  }) || [],
+
+healthScore:
+  Number(data.analysis.healthScore) > 0
+    ? Number(data.analysis.healthScore)
+    : calculateHealthScore(data.analysis.biomarkers),
+   
 
       riskLevel: data.analysis.riskLevel || "moderate",
 
@@ -443,7 +492,7 @@ export default function MedIntelAI() {
                 {analysisResults && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className={`p-6 rounded-xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                      <h3 className="font-bold text-lg mb-4">Health Trends</h3>
+                      
                       <ResponsiveContainer width="100%" height={250}>
                         <LineChart data={analysisResults.trendData}>
                           <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#475569' : '#e5e7eb'} />

@@ -1,16 +1,13 @@
-
 {
   "name": "medintel-app",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-
   "scripts": {
     "dev": "vite",
     "server": "node src/BACKEND/server.js",
     "build": "vite build"
   },
-
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.5",
@@ -22,9 +19,9 @@
     "pdf-parse": "^1.1.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "recharts": "^3.1.0"
+    "recharts": "^3.1.0",
+    "sharp": "^0.35.1"
   },
-
   "devDependencies": {
     "@eslint/js": "^9.25.0",
     "@tailwindcss/vite": "^4.1.11",
@@ -39,4 +36,3 @@
     "vite": "^7.0.4"
   }
 }
-
