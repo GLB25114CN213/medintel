@@ -5,6 +5,7 @@ import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
+console.log("✅ RUNNING NEW GEMINI SDK SERVER");
 
 dotenv.config();
 
