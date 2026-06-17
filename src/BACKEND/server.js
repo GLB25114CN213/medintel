@@ -38,10 +38,10 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "No file uploaded",
-      });
+      })
     }
 
-    console.log("📄 File received:", req.file.originalname);
+    console.log("📄 File received:", req.file.originalname);            //const result = await model.generateContent([prompt, imagePart]);
 const result = await genAI.models.generateContent({
   model: "gemini-2.5-flash",
   contents: [
@@ -63,7 +63,7 @@ const result = await genAI.models.generateContent({
   },
 });
 
-let responseText = result.text;
+   //let responseText = result.response.text();
 
     ;
 
