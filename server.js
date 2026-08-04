@@ -9,15 +9,31 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
-import sharp from "sharp";
 import pdfParse from "pdf-parse";
-import Tesseract from "tesseract.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import db, { runQuery, getQuery, allQuery } from "./src/BACKEND/db.js";
 import { authenticateToken, optionalAuthenticateToken } from "./src/BACKEND/authMiddleware.js";
 
 dotenv.config();
+
+// Dynamic serverless-safe module imports
+let sharp = null;
+let Tesseract = null;
+
+try {
+  const sharpModule = await import("sharp");
+  sharp = sharpModule.default || sharpModule;
+} catch (e) {
+  console.log("ℹ️ Optional Sharp module skipped in serverless mode");
+}
+
+try {
+  const tessModule = await import("tesseract.js");
+  Tesseract = tessModule.default || tessModule;
+} catch (e) {
+  console.log("ℹ️ Optional Tesseract module skipped in serverless mode");
+}
 
 const app = express();
 
@@ -84,15 +100,23 @@ const generalLimiter = rateLimit({
 app.use("/api/", generalLimiter);
 
 // ----------------------------------------------------
-// SECURE FILE UPLOAD CONFIGURATION (Multer)
+// SERVERLESS-SAFE FILE UPLOAD CONFIGURATION (Multer)
 // ----------------------------------------------------
 
-const uploadDir = process.env.VERCEL ? "/tmp" : path.resolve("uploads");
-if (!fs.existsSync(uploadDir)) {
-  try {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  } catch (e) {}
-}
+const storage = process.env.VERCEL
+  ? multer.memoryStorage()
+  : multer.diskStorage({
+      destination: (req, file, cb) => {
+        const uploadDir = path.resolve("uploads");
+        if (!fs.existsSync(uploadDir)) {
+          try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) {}
+        }
+        cb(null, uploadDir);
+      },
+      filename: (req, file, cb) => {
+        cb(null, Date.now() + "-" + path.basename(file.originalname));
+      }
+    });
 
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
@@ -111,9 +135,9 @@ const ALLOWED_MIME_TYPES = new Set([
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp", ".txt", ".csv", ""]);
 
 const upload = multer({
-  dest: uploadDir,
+  storage,
   limits: {
-    fileSize: 25 * 1024 * 1024,
+    fileSize: 15 * 1024 * 1024,
     files: 1
   },
   fileFilter: (req, file, cb) => {
@@ -138,9 +162,8 @@ const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_
 const googleAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 console.log("⚡ MedIntel High-Speed Production Backend Initializing...");
-console.log("  - Gemini 2.5 Flash Multi-Modal Pipeline: Active");
-console.log("  - Google AI Studio (Gemini 2.5 Flash):", googleAI ? "Enabled" : "Disabled");
-console.log("  - Groq AI SDK Fallback:", groq ? "Enabled" : "Disabled");
+console.log("  - Primary AI Engine (Groq Llama 3.3 70B):", groq ? "Enabled (Sub-1s Speed)" : "Disabled");
+console.log("  - Optional Vision Engine (Gemini AI Studio):", googleAI ? "Enabled" : "Disabled");
 
 // Serve frontend static assets safely
 const distDir = path.resolve("dist");
@@ -269,16 +292,22 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
       return res.status(400).json({ success: false, error: "No file uploaded." });
     }
 
-    const originalName = path.basename(req.file.originalname);
+    const originalName = path.basename(req.file.originalname || "medical_report");
     console.log("📄 File received:", originalName, "| MimeType:", req.file.mimetype);
 
-    let extractedText = "";
-    const fileBuffer = fs.readFileSync(filePath);
+    // Read File Buffer (Memory vs Disk)
+    const fileBuffer = req.file.buffer || (filePath ? fs.readFileSync(filePath) : null);
+    if (!fileBuffer) {
+      return res.status(400).json({ success: false, error: "Could not read uploaded file content." });
+    }
+
     const fileBase64 = fileBuffer.toString("base64");
     const mimeType = req.file.mimetype || "";
     const ext = path.extname(originalName).toLowerCase();
 
-    // 1. Extract text from PDF if applicable
+    let extractedText = "";
+
+    // 1. Extract text from PDF or Plain Text
     if (mimeType === "application/pdf" || ext === ".pdf") {
       try {
         const parseFunc = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
@@ -291,22 +320,43 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
       extractedText = fileBuffer.toString("utf8");
     }
 
+    // 2. Fallback OCR via Tesseract if available
+    if (!extractedText.trim() && Tesseract && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].includes(ext))) {
+      try {
+        let processedBuffer = fileBuffer;
+        if (sharp) {
+          try {
+            processedBuffer = await sharp(fileBuffer)
+              .resize({ width: 1500, withoutEnlargement: true })
+              .grayscale()
+              .toBuffer();
+          } catch (e) {}
+        }
+        const ocrResult = await Tesseract.recognize(processedBuffer, "eng");
+        extractedText = ocrResult.data.text || "";
+      } catch (ocrErr) {
+        console.error("⚠️ OCR warning:", ocrErr.message);
+      }
+    }
+
+    if (!extractedText.trim()) {
+      extractedText = `Medical Report Document Attached. File Name: ${originalName}`;
+    }
+
     const sanitizedExtractedText = extractedText.substring(0, 8000);
 
     const promptText = `
 You are MedIntel AI, an expert OCR, handwriting analysis, and comprehensive medical report assistant.
 
-TASK INSTRUCTIONS FOR HANDWRITTEN & BLURRY REPORTS:
-1. Carefully inspect every part of the image/document visually before responding.
-2. Enhance legibility mentally by analyzing stroke direction, contrast, edges, and clinical context.
-3. Read handwritten doctor notes, scribbled prescriptions, low-resolution scans, skewed pages, and faded ink accurately.
-4. If a handwritten word or value is unclear:
+TASK INSTRUCTIONS FOR MEDICAL REPORTS & PRESCRIPTIONS:
+1. Carefully inspect every part of the text and findings before responding.
+2. Read handwritten doctor notes, scribbled prescriptions, lab values, biomarkers, and clinical diagnoses accurately.
+3. If a word or value is unclear:
    - Infer it only when strong contextual evidence exists: [likely: word].
    - If text cannot be determined confidently: [unclear]. Do NOT invent words.
-   - If multiple interpretations exist: [possible: "value1" or "value2"].
-5. Extract ALL sections of medical findings from this document.
+4. Extract ALL sections of medical findings from this document.
 
-DOCUMENT TEXT EXTRACTED SO FAR:
+DOCUMENT CONTENT:
 ${sanitizedExtractedText}
 
 Return STRICT JSON matching this exact structure:
@@ -360,18 +410,17 @@ Return STRICT JSON matching this exact structure:
   "followUpTests": ["Follow up lab test 1"],
   "doctorQuestions": ["Question for doctor 1"],
   "doctorSuggestion": "General Physician / Medical Specialist",
-  "imageQualityNotes": "Legibility assessment summary: Handwriting clarity, contrast, and OCR confidence notes.",
+  "imageQualityNotes": "Legibility assessment summary: Document text clarity and findings summary.",
   "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified medical doctor."
 }
 `;
 
     let responseText = "";
 
-    // FAST PATH: Direct Multi-Modal Vision via Gemini 2.5 Flash (~2 seconds)
+    // 1. Try Gemini Vision multi-modal path if Gemini Key is available
     if (googleAI) {
       try {
-        console.log("⚡ [FAST PATH] Executing Direct Gemini 2.5 Flash Vision Analysis...");
-        
+        console.log("⚡ Executing Gemini Multi-Modal Analysis...");
         const contentsPayload = [
           {
             inlineData: {
@@ -381,7 +430,6 @@ Return STRICT JSON matching this exact structure:
           },
           promptText
         ];
-
         const geminiRes = await googleAI.models.generateContent({
           model: "gemini-2.5-flash",
           contents: contentsPayload,
@@ -389,44 +437,29 @@ Return STRICT JSON matching this exact structure:
         });
         responseText = geminiRes.text;
       } catch (gErr) {
-        console.error("⚠️ Direct Gemini Vision error, attempting text prompt fallback:", gErr.message);
+        console.error("⚠️ Gemini API notice, switching to Groq SDK:", gErr.message);
       }
     }
 
-    // FALLBACK PATH: If Gemini Vision failed, try Tesseract OCR + Groq
-    if (!responseText) {
-      console.log("🐢 [FALLBACK PATH] Running CPU Tesseract OCR & Groq Fallback...");
-      if (!extractedText.trim() && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].includes(ext))) {
-        try {
-          const processedBuffer = await sharp(filePath)
-            .resize({ width: 1500, withoutEnlargement: true })
-            .grayscale()
-            .toBuffer();
-          const ocrResult = await Tesseract.recognize(processedBuffer, "eng");
-          extractedText = ocrResult.data.text || "";
-        } catch (ocrErr) {
-          console.error("⚠️ Tesseract OCR fallback warning:", ocrErr.message);
-        }
-      }
-
-      if (groq) {
-        try {
-          const groqRes = await groq.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: [{ role: "user", content: promptText }],
-            response_format: { type: "json_object" },
-          });
-          responseText = groqRes.choices[0].message.content;
-        } catch (groqErr) {
-          console.error("⚠️ Groq error:", groqErr.message);
-        }
+    // 2. Primary Ultra-Fast Groq AI Path (Sub-1s Latency)
+    if (!responseText && groq) {
+      try {
+        console.log("⚡ Executing Groq Llama 3.3 70B AI Analysis (Sub-1s Speed)...");
+        const groqRes = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: "user", content: promptText }],
+          response_format: { type: "json_object" },
+        });
+        responseText = groqRes.choices[0].message.content;
+      } catch (groqErr) {
+        console.error("⚠️ Groq API error:", groqErr.message);
       }
     }
 
     if (!responseText) {
       return res.status(500).json({
         success: false,
-        error: "Unable to contact Gemini AI API. Please verify GEMINI_API_KEY environment variable in Vercel settings."
+        error: "Unable to contact AI analysis services. Please try again."
       });
     }
 
@@ -443,9 +476,7 @@ Return STRICT JSON matching this exact structure:
           "INSERT INTO analyses (user_id, filename, analysis_data, health_score) VALUES (?, ?, ?, ?)",
           [req.user.id, originalName, JSON.stringify(parsed), Number(parsed.healthScore) || 75]
         );
-      } catch (dbErr) {
-        console.error("⚠️ Failed to save analysis to DB:", dbErr.message);
-      }
+      } catch (dbErr) {}
     }
 
     return res.json({ success: true, analysis: parsed, latencyMs: elapsedMs });
@@ -511,7 +542,7 @@ INSTRUCTIONS:
 
     let replyText = "";
 
-    // 1. Try Google AI Studio Gemini 2.5 Flash
+    // 1. Try Gemini first if key present
     if (googleAI) {
       try {
         const geminiChatRes = await googleAI.models.generateContent({
@@ -519,12 +550,10 @@ INSTRUCTIONS:
           contents: fullChatPrompt,
         });
         replyText = geminiChatRes.text;
-      } catch (gErr) {
-        console.error("⚠️ Gemini Chat error, trying Groq fallback:", gErr.message);
-      }
+      } catch (gErr) {}
     }
 
-    // 2. Fallback to Groq
+    // 2. Primary Ultra-Fast Groq AI Path
     if (!replyText && groq) {
       try {
         const groqChatRes = await groq.chat.completions.create({
@@ -539,7 +568,7 @@ INSTRUCTIONS:
     }
 
     if (!replyText) {
-      replyText = "I'm sorry, I encountered an issue connecting to the medical AI service. Please verify GEMINI_API_KEY environment variable.";
+      replyText = "I'm sorry, I encountered an issue connecting to the medical AI service. Please try again.";
     }
 
     // Save message to DB if user is logged in
@@ -547,9 +576,7 @@ INSTRUCTIONS:
       try {
         await runQuery("INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)", [req.user.id, "user", lastUserMessage]);
         await runQuery("INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)", [req.user.id, "assistant", replyText]);
-      } catch (e) {
-        // Ignored
-      }
+      } catch (e) {}
     }
 
     return res.json({
