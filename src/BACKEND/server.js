@@ -593,8 +593,11 @@ if (fs.existsSync(distDir)) {
   });
 }
 
-const PORT = process.env.PORT || 5001;
+export default app;
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 MedIntel High-Speed Production Backend running on port ${PORT}`);
-});
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 5001;
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 MedIntel High-Speed Production Backend running on port ${PORT}`);
+  });
+}

@@ -12,9 +12,24 @@ import {
   Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
-const API_BASE = typeof window !== 'undefined'
-  ? (window.location.port === '5001' ? '' : `${window.location.protocol}//${window.location.hostname}:5001`)
-  : '';
+const getApiBase = () => {
+  if (typeof window === 'undefined') return '';
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+
+  const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1' || /^192\.168\./.test(hostname) || /^10\./.test(hostname);
+
+  // Deployed environments (Vercel, Render, Railway) use relative paths
+  if (!isLocalHost || port === '5001' || !port) {
+    return '';
+  }
+
+  return `${window.location.protocol}//${hostname}:5001`;
+};
+
+const API_BASE = getApiBase();
 
 export default function MedIntelAI() {
   // Authentication & Session States
