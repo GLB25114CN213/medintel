@@ -87,9 +87,11 @@ app.use("/api/", generalLimiter);
 // SECURE FILE UPLOAD CONFIGURATION (Multer)
 // ----------------------------------------------------
 
-const uploadDir = path.resolve("uploads");
+const uploadDir = process.env.VERCEL ? "/tmp" : path.resolve("uploads");
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  } catch (e) {}
 }
 
 const ALLOWED_MIME_TYPES = new Set([

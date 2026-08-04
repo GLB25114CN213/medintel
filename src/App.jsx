@@ -195,7 +195,16 @@ export default function MedIntelAI() {
         body: formData,
       });
 
-      const data = await response.json();
+      const responseText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (jsonErr) {
+        console.error("Non-JSON Response from Server:", responseText);
+        alert(`Analysis failed: ${responseText || "Server returned non-JSON response"}`);
+        setLoading(false);
+        return;
+      }
 
       if (!data.success) {
         alert(data.error || "Analysis failed");
