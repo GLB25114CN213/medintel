@@ -138,7 +138,7 @@ const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_
 const googleAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 console.log("⚡ MedIntel High-Speed Production Backend Initializing...");
-console.log("  - Ultra-Fast Gemini 2.5 Flash Vision Pipeline: Active (~2s latency)");
+console.log("  - Gemini 2.5 Flash Multi-Modal Pipeline: Active");
 console.log("  - Google AI Studio (Gemini 2.5 Flash):", googleAI ? "Enabled" : "Disabled");
 console.log("  - Groq AI SDK Fallback:", groq ? "Enabled" : "Disabled");
 
@@ -278,7 +278,7 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     const mimeType = req.file.mimetype || "";
     const ext = path.extname(originalName).toLowerCase();
 
-    // 1. If PDF or Text, quickly extract raw text
+    // 1. Extract text from PDF if applicable
     if (mimeType === "application/pdf" || ext === ".pdf") {
       try {
         const parseFunc = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
@@ -405,22 +405,29 @@ Return STRICT JSON matching this exact structure:
           const ocrResult = await Tesseract.recognize(processedBuffer, "eng");
           extractedText = ocrResult.data.text || "";
         } catch (ocrErr) {
-          console.error("⚠️ Tesseract OCR fallback error:", ocrErr.message);
+          console.error("⚠️ Tesseract OCR fallback warning:", ocrErr.message);
         }
       }
 
       if (groq) {
-        const groqRes = await groq.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: promptText }],
-          response_format: { type: "json_object" },
-        });
-        responseText = groqRes.choices[0].message.content;
+        try {
+          const groqRes = await groq.chat.completions.create({
+            model: "llama-3.3-70b-versatile",
+            messages: [{ role: "user", content: promptText }],
+            response_format: { type: "json_object" },
+          });
+          responseText = groqRes.choices[0].message.content;
+        } catch (groqErr) {
+          console.error("⚠️ Groq error:", groqErr.message);
+        }
       }
     }
 
     if (!responseText) {
-      throw new Error("Unable to contact AI analysis services.");
+      return res.status(500).json({
+        success: false,
+        error: "Unable to contact Gemini AI API. Please verify GEMINI_API_KEY environment variable in Vercel settings."
+      });
     }
 
     responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
@@ -444,7 +451,7 @@ Return STRICT JSON matching this exact structure:
     return res.json({ success: true, analysis: parsed, latencyMs: elapsedMs });
   } catch (error) {
     console.error("❌ ERROR in /analyze:", error);
-    return res.status(500).json({ success: false, error: "An error occurred while analyzing the medical report." });
+    return res.status(500).json({ success: false, error: error.message || "An error occurred while analyzing the medical report." });
   } finally {
     if (filePath && fs.existsSync(filePath)) {
       try { fs.unlinkSync(filePath); } catch (e) {}
@@ -519,18 +526,20 @@ INSTRUCTIONS:
 
     // 2. Fallback to Groq
     if (!replyText && groq) {
-      const groqChatRes = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: chatSystemInstruction },
-          ...sanitizedMessages.map(m => ({ role: m.role, content: m.content }))
-        ],
-      });
-      replyText = groqChatRes.choices[0].message.content;
+      try {
+        const groqChatRes = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: chatSystemInstruction },
+            ...sanitizedMessages.map(m => ({ role: m.role, content: m.content }))
+          ],
+        });
+        replyText = groqChatRes.choices[0].message.content;
+      } catch (e) {}
     }
 
     if (!replyText) {
-      replyText = "I'm sorry, I encountered an issue connecting to the medical AI service. Please try again.";
+      replyText = "I'm sorry, I encountered an issue connecting to the medical AI service. Please verify GEMINI_API_KEY environment variable.";
     }
 
     // Save message to DB if user is logged in
