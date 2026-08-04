@@ -111,7 +111,7 @@ const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".
 const upload = multer({
   dest: uploadDir,
   limits: {
-    fileSize: 25 * 1024 * 1024, // 25MB for high-res mobile camera photos
+    fileSize: 25 * 1024 * 1024,
     files: 1
   },
   fileFilter: (req, file, cb) => {
@@ -135,8 +135,8 @@ const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString("he
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 const googleAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
-console.log("🔒 MedIntel Secure Production Backend Initializing...");
-console.log("  - Multi-Modal Vision & Handwriting Analysis: Active");
+console.log("⚡ MedIntel High-Speed Production Backend Initializing...");
+console.log("  - Ultra-Fast Gemini 2.5 Flash Vision Pipeline: Active (~2s latency)");
 console.log("  - Google AI Studio (Gemini 2.5 Flash):", googleAI ? "Enabled" : "Disabled");
 console.log("  - Groq AI SDK Fallback:", groq ? "Enabled" : "Disabled");
 
@@ -248,7 +248,7 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// MULTI-MODAL AI REPORT ANALYZER ENDPOINT
+// ULTRA-FAST MULTI-MODAL AI REPORT ANALYZER ENDPOINT
 // ----------------------------------------------------
 
 app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
@@ -259,6 +259,7 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     next();
   });
 }, async (req, res) => {
+  const startTime = Date.now();
   let filePath = req.file?.path;
 
   try {
@@ -267,7 +268,7 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     }
 
     const originalName = path.basename(req.file.originalname);
-    console.log("📄 File received for multi-modal analysis:", originalName, "| MimeType:", req.file.mimetype);
+    console.log("📄 File received:", originalName, "| MimeType:", req.file.mimetype);
 
     let extractedText = "";
     const fileBuffer = fs.readFileSync(filePath);
@@ -275,8 +276,8 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     const mimeType = req.file.mimetype || "";
     const ext = path.extname(originalName).toLowerCase();
 
+    // 1. If PDF or Text, quickly extract raw text
     if (mimeType === "application/pdf" || ext === ".pdf") {
-      console.log("🔍 Extracting text from PDF...");
       try {
         const parseFunc = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
         const pdfData = await parseFunc(fileBuffer);
@@ -286,24 +287,6 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
       }
     } else if (mimeType.startsWith("text/") || ext === ".txt" || ext === ".csv") {
       extractedText = fileBuffer.toString("utf8");
-    }
-
-    if (!extractedText.trim() && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].includes(ext))) {
-      console.log("🖼️ Preprocessing image for Tesseract OCR...");
-      try {
-        const processedBuffer = await sharp(filePath)
-          .resize({ width: 2000, withoutEnlargement: true })
-          .grayscale()
-          .normalize()
-          .sharpen()
-          .jpeg({ quality: 95 })
-          .toBuffer();
-
-        const ocrResult = await Tesseract.recognize(processedBuffer, "eng");
-        extractedText = ocrResult.data.text || "";
-      } catch (ocrErr) {
-        console.error("⚠️ OCR warning:", ocrErr.message);
-      }
     }
 
     const sanitizedExtractedText = extractedText.substring(0, 8000);
@@ -382,10 +365,10 @@ Return STRICT JSON matching this exact structure:
 
     let responseText = "";
 
-    // 1. Send Multi-Modal Payload to Google AI Studio Gemini 2.5 Flash
+    // FAST PATH: Direct Multi-Modal Vision via Gemini 2.5 Flash (~2 seconds)
     if (googleAI) {
       try {
-        console.log("🧠 Sending Multi-Modal Vision Payload to Gemini 2.5 Flash...");
+        console.log("⚡ [FAST PATH] Executing Direct Gemini 2.5 Flash Vision Analysis...");
         
         const contentsPayload = [
           {
@@ -404,29 +387,34 @@ Return STRICT JSON matching this exact structure:
         });
         responseText = geminiRes.text;
       } catch (gErr) {
-        console.error("⚠️ Gemini Vision API error, falling back to text prompt:", gErr.message);
-        try {
-          const textRes = await googleAI.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: promptText,
-            config: { responseMimeType: "application/json" }
-          });
-          responseText = textRes.text;
-        } catch (err2) {
-          console.error("⚠️ Gemini Fallback error:", err2.message);
-        }
+        console.error("⚠️ Direct Gemini Vision error, attempting text prompt fallback:", gErr.message);
       }
     }
 
-    // 2. Fallback to Groq
-    if (!responseText && groq) {
-      console.log("🧠 Sending request to Groq Fallback...");
-      const groqRes = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: promptText }],
-        response_format: { type: "json_object" },
-      });
-      responseText = groqRes.choices[0].message.content;
+    // FALLBACK PATH: If Gemini Vision failed, try Tesseract OCR + Groq
+    if (!responseText) {
+      console.log("🐢 [FALLBACK PATH] Running CPU Tesseract OCR & Groq Fallback...");
+      if (!extractedText.trim() && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].includes(ext))) {
+        try {
+          const processedBuffer = await sharp(filePath)
+            .resize({ width: 1500, withoutEnlargement: true })
+            .grayscale()
+            .toBuffer();
+          const ocrResult = await Tesseract.recognize(processedBuffer, "eng");
+          extractedText = ocrResult.data.text || "";
+        } catch (ocrErr) {
+          console.error("⚠️ Tesseract OCR fallback error:", ocrErr.message);
+        }
+      }
+
+      if (groq) {
+        const groqRes = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [{ role: "user", content: promptText }],
+          response_format: { type: "json_object" },
+        });
+        responseText = groqRes.choices[0].message.content;
+      }
     }
 
     if (!responseText) {
@@ -436,7 +424,8 @@ Return STRICT JSON matching this exact structure:
     responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(responseText);
 
-    console.log("✅ Multi-modal analysis complete successfully");
+    const elapsedMs = Date.now() - startTime;
+    console.log(`✅ Analysis completed in ${elapsedMs}ms (${(elapsedMs / 1000).toFixed(2)}s)`);
 
     // Save to DB if user is logged in
     if (req.user && req.user.id) {
@@ -450,7 +439,7 @@ Return STRICT JSON matching this exact structure:
       }
     }
 
-    return res.json({ success: true, analysis: parsed });
+    return res.json({ success: true, analysis: parsed, latencyMs: elapsedMs });
   } catch (error) {
     console.error("❌ ERROR in /analyze:", error);
     return res.status(500).json({ success: false, error: "An error occurred while analyzing the medical report." });
@@ -513,7 +502,7 @@ INSTRUCTIONS:
 
     let replyText = "";
 
-    // 1. Try Google AI Studio Gemini API first
+    // 1. Try Google AI Studio Gemini 2.5 Flash
     if (googleAI) {
       try {
         const geminiChatRes = await googleAI.models.generateContent({
@@ -607,5 +596,5 @@ if (fs.existsSync(distDir)) {
 const PORT = process.env.PORT || 5001;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 MedIntel Hardened Production Backend running on port ${PORT}`);
+  console.log(`🚀 MedIntel High-Speed Production Backend running on port ${PORT}`);
 });
