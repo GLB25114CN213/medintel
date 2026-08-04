@@ -195,9 +195,12 @@ export default function MedIntelAI() {
       // Convert API JSON to UI Structure
       const convertedAnalysis = {
         patientInfo: {
-          age: data.analysis.age || "34",
-          gender: data.analysis.gender || "Not specified",
-          testDate: new Date().toLocaleDateString(),
+          name: data.analysis.patientName || "Patient Profile",
+          age: data.analysis.age || "Unspecified",
+          gender: data.analysis.gender || "Unspecified",
+          testDate: data.analysis.reportDate || new Date().toLocaleDateString(),
+          facilityName: data.analysis.facilityName || "Medical Health Center",
+          doctorName: data.analysis.doctorName || "Attending Physician",
         },
 
         healthScore: Number(data.analysis.healthScore) > 0 ? Number(data.analysis.healthScore) : 75,
@@ -206,9 +209,12 @@ export default function MedIntelAI() {
         summaryTechnical: data.analysis.professionalExplanation || "Technical medical evaluation completed.",
         riskLevel: data.analysis.riskLevel || "Moderate",
 
+        diagnoses: data.analysis.diagnoses || [],
+        symptoms: data.analysis.symptomsIdentified || [],
+
         alerts: data.analysis.abnormalFindings?.map((a) => ({
           title: a.name,
-          severity: "warning",
+          severity: a.severity || "warning",
           value: a.value,
         })) || [],
 
@@ -219,19 +225,22 @@ export default function MedIntelAI() {
           normalRange: b.normalRange,
           status: (b.status || "normal").toLowerCase(),
           significance: b.meaning,
-          recommendation: b.recommendation || "",
+          confidence: b.confidence || "High",
         })) || [],
 
         medicines: data.analysis.medicines || [],
+        radiologyFindings: data.analysis.radiologyFindings || [],
 
         recommendations: {
           lifestyle: data.analysis.lifestyleRecommendations || data.analysis.lifestyle || [],
           nutrition: data.analysis.dietRecommendations || data.analysis.nutrition || [],
+          foodsToAvoid: data.analysis.foodsToAvoid || [],
           supplements: data.analysis.supplementRecommendations || [],
           followUpTests: data.analysis.followUpTests || [],
         },
 
         doctorQuestions: data.analysis.doctorQuestions || data.analysis.questionsForDoctor || [],
+        doctorSuggestion: data.analysis.doctorSuggestion || "General Physician / Specialist",
         imageQualityNotes: data.analysis.imageQualityNotes || "Document OCR assessment complete.",
       };
 
@@ -679,71 +688,80 @@ export default function MedIntelAI() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12"
+              className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8"
             >
-              {/* Header */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
+              {/* Header Banner */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-3xl font-extrabold mb-1">Medical Report Insights</h2>
-                  <p className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                    Analyzed on {analysisResults.patientInfo.testDate}
-                  </p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="px-3 py-1 rounded-full text-xs font-extrabold uppercase bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                      Medical Findings Analysis
+                    </span>
+                    <span className="text-xs text-slate-400">Date: {analysisResults.patientInfo.testDate}</span>
+                  </div>
+                  <h2 className="text-3xl font-extrabold">Comprehensive Clinical Findings</h2>
                 </div>
 
                 <button
                   onClick={() => setCurrentPage('chat')}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:scale-105 transition flex items-center gap-2"
+                  className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-sm font-bold shadow-xl shadow-cyan-500/25 hover:scale-105 transition flex items-center gap-2"
                 >
-                  <Brain className="w-4 h-4" /> Consult AI Assistant About This Report
+                  <Brain className="w-5 h-5" /> Consult AI Assistant About This Report
                 </button>
               </div>
 
-              {/* Health Score & Overview Glass Card */}
-              <div className={`p-8 rounded-3xl border mb-8 ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+              {/* 1. PATIENT & HOSPITAL METADATA CARD */}
+              <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-4 flex items-center gap-2">
+                  <User className="w-4 h-4" /> Patient & Document Profile
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <span className="text-xs text-slate-400 block">Patient Name</span>
+                    <span className="font-bold">{analysisResults.patientInfo.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-400 block">Age / Gender</span>
+                    <span className="font-bold">{analysisResults.patientInfo.age} / {analysisResults.patientInfo.gender}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-400 block">Facility / Laboratory</span>
+                    <span className="font-bold">{analysisResults.patientInfo.facilityName}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-400 block">Attending Physician</span>
+                    <span className="font-bold">{analysisResults.patientInfo.doctorName}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. HEALTH SCORE & EXECUTIVE OVERVIEW */}
+              <div className={`p-8 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
                   
                   {/* Gauge */}
                   <div className="flex flex-col items-center justify-center text-center border-b md:border-b-0 md:border-r border-white/10 pb-6 md:pb-0">
-                    <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Overall Health Score</h3>
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Overall Health Index</h3>
                     <HealthScoreCircle score={analysisResults.healthScore} />
-                    <span className="mt-4 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                    <span className="mt-4 px-4 py-1.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
                       {analysisResults.riskLevel} Risk Profile
                     </span>
                   </div>
 
-                  {/* Summary & Alerts */}
+                  {/* Summary */}
                   <div className="md:col-span-2 space-y-4">
                     <div>
-                      <h4 className="text-lg font-bold text-cyan-400 mb-2">Patient Summary</h4>
+                      <h4 className="text-base font-bold text-cyan-400 mb-1">Executive Clinical Summary</h4>
                       <p className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
                         {analysisResults.summaryPatientFriendly}
                       </p>
                     </div>
 
-                    {/* Alerts */}
-                    {analysisResults.alerts?.length > 0 && (
-                      <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-amber-950/30 border-amber-800/50' : 'bg-amber-50 border-amber-200'}`}>
-                        <h5 className="text-xs font-bold text-amber-400 flex items-center gap-2 mb-2 uppercase tracking-wide">
-                          <AlertCircle className="w-4 h-4" /> Abnormal Biomarkers Detected ({analysisResults.alerts.length})
-                        </h5>
-                        <div className="flex flex-wrap gap-2">
-                          {analysisResults.alerts.map((a, i) => (
-                            <span key={i} className="px-3 py-1 rounded-xl text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              {a.title}: {a.value}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* OCR Assessment */}
-                    {analysisResults.imageQualityNotes && (
-                      <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-indigo-950/30 border-indigo-800/50' : 'bg-indigo-50 border-indigo-200'}`}>
-                        <h5 className="text-xs font-bold text-indigo-400 flex items-center gap-2 mb-1 uppercase tracking-wide">
-                          <FileText className="w-4 h-4" /> Document & Handwriting Assessment
-                        </h5>
-                        <p className={`text-xs ${darkMode ? 'text-indigo-300' : 'text-indigo-800'}`}>
-                          {analysisResults.imageQualityNotes}
+                    {analysisResults.summaryTechnical && (
+                      <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                        <h5 className="text-xs font-bold text-indigo-400 mb-1 uppercase tracking-wide">Specialist Technical Evaluation</h5>
+                        <p className={`text-xs leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                          {analysisResults.summaryTechnical}
                         </p>
                       </div>
                     )}
@@ -751,77 +769,249 @@ export default function MedIntelAI() {
                 </div>
               </div>
 
-              {/* Biomarkers Table Grid */}
-              <div className={`p-8 rounded-3xl border mb-8 ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-                  <Activity className="w-6 h-6 text-cyan-400" /> Extracted Biomarkers & Lab Results
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {analysisResults.biomarkers.map((bm, i) => (
-                    <div
-                      key={i}
-                      className={`p-4 rounded-2xl border transition-all ${
-                        bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
-                          ? darkMode ? 'bg-amber-950/20 border-amber-500/30' : 'bg-amber-50 border-amber-200'
-                          : darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-bold text-sm">{bm.name}</span>
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
-                          bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
-                            ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                            : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                        }`}>
-                          {bm.status}
-                        </span>
+              {/* 3. DIAGNOSES & IDENTIFIED SYMPTOMS */}
+              {(analysisResults.diagnoses?.length > 0 || analysisResults.symptoms?.length > 0) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {analysisResults.diagnoses?.length > 0 && (
+                    <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-rose-400 mb-3 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4" /> Clinical Diagnoses & Key Findings
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {analysisResults.diagnoses.map((d, i) => (
+                          <span key={i} className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                            {d}
+                          </span>
+                        ))}
                       </div>
-                      <div className="flex items-baseline gap-2 mb-2">
-                        <span className="text-2xl font-black text-cyan-400">{bm.value}</span>
-                        <span className="text-xs text-slate-400">{bm.unit}</span>
-                        <span className="text-xs text-slate-500 ml-auto">Range: {bm.normalRange}</span>
-                      </div>
-                      {bm.significance && (
-                        <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                          {bm.significance}
-                        </p>
-                      )}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  )}
 
-              {/* Lifestyle & Diet Recommendations */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {analysisResults.symptoms?.length > 0 && (
+                    <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-amber-400 mb-3 flex items-center gap-2">
+                        <Activity className="w-4 h-4" /> Symptoms Identified
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {analysisResults.symptoms.map((s, i) => (
+                          <span key={i} className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 4. ABNORMAL BIOMARKERS ALERT BANNER */}
+              {analysisResults.alerts?.length > 0 && (
+                <div className={`p-6 rounded-3xl border ${darkMode ? 'bg-amber-950/30 border-amber-800/50' : 'bg-amber-50 border-amber-200'}`}>
+                  <h3 className="text-sm font-bold text-amber-400 flex items-center gap-2 mb-3 uppercase tracking-wide">
+                    <AlertCircle className="w-5 h-5" /> Abnormal Lab Alerts ({analysisResults.alerts.length})
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {analysisResults.alerts.map((a, i) => (
+                      <span key={i} className="px-4 py-2 rounded-2xl text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        {a.title}: <span className="underline">{a.value}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 5. COMPLETE BIOMARKERS & LAB RESULTS GRID */}
+              {analysisResults.biomarkers?.length > 0 && (
+                <div className={`p-8 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+                    <Activity className="w-6 h-6 text-cyan-400" /> Biomarkers & Quantitative Lab Values
+                  </h3>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {analysisResults.biomarkers.map((bm, i) => (
+                      <div
+                        key={i}
+                        className={`p-5 rounded-2xl border transition-all ${
+                          bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
+                            ? darkMode ? 'bg-amber-950/20 border-amber-500/30' : 'bg-amber-50 border-amber-200'
+                            : darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-bold text-sm">{bm.name}</span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
+                            bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
+                              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                              : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          }`}>
+                            {bm.status}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline gap-2 mb-2">
+                          <span className="text-2xl font-black text-cyan-400">{bm.value}</span>
+                          <span className="text-xs text-slate-400">{bm.unit}</span>
+                          <span className="text-xs text-slate-500 ml-auto">Normal Range: {bm.normalRange}</span>
+                        </div>
+                        {bm.significance && (
+                          <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                            {bm.significance}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 6. PRESCRIBED MEDICATIONS TABLE */}
+              {analysisResults.medicines?.length > 0 && (
+                <div className={`p-8 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-indigo-400">
+                    <FileText className="w-6 h-6" /> Prescribed Medications & Prescriptions
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className={`border-b text-xs uppercase tracking-wider ${darkMode ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-500'}`}>
+                          <th className="pb-3">Medication Name</th>
+                          <th className="pb-3">Dosage</th>
+                          <th className="pb-3">Frequency</th>
+                          <th className="pb-3">Duration</th>
+                          <th className="pb-3">Purpose / Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/10">
+                        {analysisResults.medicines.map((m, i) => (
+                          <tr key={i} className="hover:bg-cyan-500/5 transition">
+                            <td className="py-3 font-bold text-cyan-300">{m.name}</td>
+                            <td className="py-3">{m.dose || 'As directed'}</td>
+                            <td className="py-3">{m.frequency || 'Daily'}</td>
+                            <td className="py-3">{m.duration || 'As prescribed'}</td>
+                            <td className={`py-3 text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{m.purpose || m.instructions || 'Prescribed treatment'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* 7. RADIOLOGY & IMAGING FINDINGS */}
+              {analysisResults.radiologyFindings?.length > 0 && (
                 <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-cyan-400">
-                    <Heart className="w-5 h-5" /> Diet & Nutrition Advice
+                  <h3 className="text-lg font-bold mb-3 flex items-center gap-2 text-cyan-400">
+                    <FileText className="w-5 h-5" /> Radiology & Imaging Observations
                   </h3>
                   <ul className="space-y-2">
+                    {analysisResults.radiologyFindings.map((rf, i) => (
+                      <li key={i} className="text-sm flex items-start gap-2">
+                        <span className="text-cyan-400 font-bold">•</span>
+                        <span>{rf}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* 8. ACTIONABLE RECOMMENDATIONS GRID */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Diet & Foods */}
+                <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-emerald-400">
+                    <Heart className="w-5 h-5" /> Nutrition & Dietary Guidance
+                  </h3>
+                  <ul className="space-y-2 mb-4">
                     {analysisResults.recommendations.nutrition.map((item, i) => (
+                      <li key={i} className="text-sm flex items-start gap-2">
+                        <span className="text-emerald-400 font-bold">•</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {analysisResults.recommendations.foodsToAvoid?.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-white/10">
+                      <h4 className="text-xs font-bold uppercase text-rose-400 mb-2">Foods to Limit / Avoid:</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {analysisResults.recommendations.foodsToAvoid.map((fa, i) => (
+                          <span key={i} className="px-3 py-1 rounded-xl text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                            {fa}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lifestyle & Follow-up Tests */}
+                <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-cyan-400">
+                    <Activity className="w-5 h-5" /> Lifestyle & Follow-Up Plan
+                  </h3>
+                  <ul className="space-y-2 mb-4">
+                    {analysisResults.recommendations.lifestyle.map((item, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
                         <span className="text-cyan-400 font-bold">•</span>
                         <span>{item}</span>
                       </li>
                     ))}
                   </ul>
-                </div>
 
+                  {analysisResults.recommendations.followUpTests?.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-white/10">
+                      <h4 className="text-xs font-bold uppercase text-indigo-400 mb-2">Recommended Follow-Up Diagnostic Tests:</h4>
+                      <ul className="space-y-1">
+                        {analysisResults.recommendations.followUpTests.map((ft, i) => (
+                          <li key={i} className="text-xs flex items-center gap-2 text-indigo-300">
+                            <span className="font-bold">•</span> {ft}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 9. QUESTIONS FOR YOUR DOCTOR & SPECIALIST SUGGESTION */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-emerald-400">
-                    <Activity className="w-5 h-5" /> Questions for Your Doctor
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-indigo-400">
+                    <Brain className="w-5 h-5" /> Questions to Ask Your Doctor
                   </h3>
                   <ul className="space-y-2">
                     {analysisResults.doctorQuestions.map((q, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
-                        <span className="text-emerald-400 font-bold">•</span>
+                        <span className="text-indigo-400 font-bold">•</span>
                         <span>{q}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
+
+                <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'} flex flex-col justify-between`}>
+                  <div>
+                    <h3 className="text-lg font-bold mb-2 flex items-center gap-2 text-emerald-400">
+                      <User className="w-5 h-5" /> Recommended Doctor Specialist
+                    </h3>
+                    <p className={`text-sm mb-4 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                      Based on your report findings, consultation with a <strong className="text-cyan-400">{analysisResults.doctorSuggestion}</strong> is recommended.
+                    </p>
+                  </div>
+
+                  {/* OCR Legibility Assessment */}
+                  {analysisResults.imageQualityNotes && (
+                    <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-indigo-950/30 border-indigo-800/50' : 'bg-indigo-50 border-indigo-200'}`}>
+                      <h5 className="text-xs font-bold text-indigo-400 flex items-center gap-2 mb-1 uppercase tracking-wide">
+                        <FileText className="w-4 h-4" /> Document & Handwriting Assessment
+                      </h5>
+                      <p className={`text-xs ${darkMode ? 'text-indigo-300' : 'text-indigo-800'}`}>
+                        {analysisResults.imageQualityNotes}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
+
             </motion.div>
           )}
 

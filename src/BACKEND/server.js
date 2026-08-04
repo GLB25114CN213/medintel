@@ -54,7 +54,7 @@ app.use(cors({
 app.use(express.json({ limit: "1mb" }));
 
 // ----------------------------------------------------
-// RATE LIMITING (Brute force & DoS Prevention)
+// RATE LIMITING
 // ----------------------------------------------------
 
 const authLimiter = rateLimit({
@@ -131,11 +131,9 @@ const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_
 const googleAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 console.log("🔒 MedIntel Secure Production Backend Initializing...");
-console.log("  - Security Headers (Helmet): Active");
-console.log("  - Rate Limiting: Active");
-console.log("  - Input Validation & File Sanitization: Active");
-console.log("  - Google AI Studio (Gemini):", googleAI ? "Enabled" : "Disabled");
-console.log("  - Groq AI SDK:", groq ? "Enabled" : "Disabled");
+console.log("  - Multi-Modal Vision & Handwriting Analysis: Active");
+console.log("  - Google AI Studio (Gemini 2.5 Flash):", googleAI ? "Enabled" : "Disabled");
+console.log("  - Groq AI SDK Fallback:", groq ? "Enabled" : "Disabled");
 
 // Serve frontend static assets safely
 const distDir = path.resolve("dist");
@@ -184,7 +182,6 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: "An account with this email already exists." });
     }
 
-    // Hash password with 12 bcrypt salt rounds
     const password_hash = await bcrypt.hash(password, 12);
     const result = await runQuery(
       "INSERT INTO users (email, password_hash, full_name) VALUES (?, ?, ?)",
@@ -246,7 +243,7 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// AI REPORT ANALYZER ENDPOINT
+// MULTI-MODAL AI REPORT ANALYZER ENDPOINT
 // ----------------------------------------------------
 
 app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
@@ -265,10 +262,11 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     }
 
     const originalName = path.basename(req.file.originalname);
-    console.log("📄 File received:", originalName, "| MimeType:", req.file.mimetype);
+    console.log("📄 File received for multi-modal analysis:", originalName, "| MimeType:", req.file.mimetype);
 
     let extractedText = "";
     const fileBuffer = fs.readFileSync(filePath);
+    const fileBase64 = fileBuffer.toString("base64");
     const mimeType = req.file.mimetype || "";
     const ext = path.extname(originalName).toLowerCase();
 
@@ -279,14 +277,14 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
         const pdfData = await parseFunc(fileBuffer);
         extractedText = pdfData.text || "";
       } catch (pdfErr) {
-        console.error("⚠️ PDF extraction warning:", pdfErr.message);
+        console.error("⚠️ PDF text extraction warning:", pdfErr.message);
       }
     } else if (mimeType.startsWith("text/") || ext === ".txt" || ext === ".csv") {
       extractedText = fileBuffer.toString("utf8");
     }
 
     if (!extractedText.trim() && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].includes(ext))) {
-      console.log("🖼️ Performing OCR image recognition via Tesseract...");
+      console.log("🖼️ Preprocessing image for Tesseract OCR...");
       try {
         const processedBuffer = await sharp(filePath)
           .resize({ width: 2000, withoutEnlargement: true })
@@ -303,45 +301,50 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
       }
     }
 
-    if (!extractedText.trim()) {
-      extractedText = `File Name: ${originalName}. Medical document attached.`;
-    }
-
     const sanitizedExtractedText = extractedText.substring(0, 8000);
 
-    const prompt = `
-You are MedIntel AI, an expert OCR, handwriting analysis, and medical report analysis assistant.
+    const promptText = `
+You are MedIntel AI, an expert OCR, handwriting analysis, and comprehensive medical report assistant.
 
-Your task is to accurately read, analyze, and transcribe the contents of the uploaded image/document:
-DOCUMENT OCR & HANDWRITING INSTRUCTIONS:
-1. Carefully inspect every part of the text before responding.
-2. Preserve original formatting (headings, lists, tables, etc.).
-3. If a word or value is unclear:
-   - Infer it only when there is strong contextual evidence: [likely: word].
+TASK INSTRUCTIONS FOR HANDWRITTEN & BLURRY REPORTS:
+1. Carefully inspect every part of the image/document visually before responding.
+2. Enhance legibility mentally by analyzing stroke direction, contrast, edges, and clinical context.
+3. Read handwritten doctor notes, scribbled prescriptions, low-resolution scans, skewed pages, and faded ink accurately.
+4. If a handwritten word or value is unclear:
+   - Infer it only when strong contextual evidence exists: [likely: word].
    - If text cannot be determined confidently: [unclear]. Do NOT invent words.
-4. For equations, medical symbols, and diagrams, reproduce accurately using LaTeX or plain text.
-5. In "imageQualityNotes", provide a brief assessment summary of legibility, contrast, and handwriting clarity.
+   - If multiple interpretations exist: [possible: "value1" or "value2"].
+5. Extract ALL sections of medical findings from this document.
 
-DOCUMENT TEXT CONTENT:
+DOCUMENT TEXT EXTRACTED SO FAR:
 ${sanitizedExtractedText}
 
 Return STRICT JSON matching this exact structure:
 {
   "isMedicalReport": true,
+  "patientName": "Patient Name or Unspecified",
+  "age": "34",
+  "gender": "Male / Female / Unspecified",
+  "reportDate": "Report date or Unspecified",
+  "facilityName": "Hospital / Laboratory Name",
+  "doctorName": "Doctor / Physician Name",
   "healthScore": 75,
-  "healthScoreReason": "Explanation for health score based on findings.",
-  "summary": "Clinical summary of the patient report.",
+  "healthScoreReason": "Detailed explanation for health score based on biomarkers and clinical findings.",
   "riskLevel": "Moderate",
+  "summary": "Clinical summary of the patient report.",
   "simpleExplanation": "Easy to understand patient-friendly explanation.",
   "professionalExplanation": "Detailed technical medical analysis.",
+  "diagnoses": ["Primary Diagnosis", "Secondary Finding"],
+  "symptomsIdentified": ["Symptom 1", "Symptom 2"],
   "abnormalFindings": [
-    { "name": "Biomarker Name", "value": "Abnormal Value" }
+    { "name": "Biomarker Name", "value": "Abnormal Value", "severity": "High" }
   ],
   "biomarkers": [
     {
       "name": "Biomarker Name",
       "value": "12.5",
-      "status": "Normal",
+      "unit": "mg/dL",
+      "status": "High",
       "normalRange": "12.0 - 15.0",
       "meaning": "Clinical meaning",
       "confidence": "High"
@@ -352,47 +355,70 @@ Return STRICT JSON matching this exact structure:
       "name": "Medicine Name",
       "dose": "500mg",
       "frequency": "Once daily",
+      "duration": "7 days",
       "purpose": "Purpose of medication",
+      "instructions": "Take after meals",
       "confidence": "High"
     }
   ],
+  "radiologyFindings": ["X-Ray / CT / Ultrasound observation if present"],
   "recommendations": ["Recommendation 1"],
-  "lifestyle": ["Lifestyle advice 1"],
   "lifestyleRecommendations": ["Lifestyle advice 1"],
-  "nutrition": ["Nutrition advice 1"],
   "dietRecommendations": ["Nutrition advice 1"],
-  "questionsForDoctor": ["Question for doctor 1"],
+  "foodsToAvoid": ["Foods to avoid 1"],
+  "supplementRecommendations": ["Vitamin D3 60,000 IU"],
+  "followUpTests": ["Follow up lab test 1"],
   "doctorQuestions": ["Question for doctor 1"],
-  "followUpTests": ["Follow up test 1"],
-  "doctorSuggestion": "General Physician / Specialist",
-  "emergency": false,
-  "emergencyWarningSigns": [],
-  "imageQualityNotes": "Legibility and handwriting clarity assessment summary.",
+  "doctorSuggestion": "General Physician / Medical Specialist",
+  "imageQualityNotes": "Legibility assessment summary: Handwriting clarity, contrast, and OCR confidence notes.",
   "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified medical doctor."
 }
 `;
 
     let responseText = "";
 
-    // 1. Try Google AI Studio Gemini API first
+    // 1. Send Multi-Modal Payload to Google AI Studio Gemini 2.5 Flash
     if (googleAI) {
       try {
+        console.log("🧠 Sending Multi-Modal Vision Payload to Gemini 2.5 Flash...");
+        
+        const contentsPayload = [
+          {
+            inlineData: {
+              mimeType: mimeType.startsWith("image/") ? mimeType : (mimeType === "application/pdf" ? "application/pdf" : "image/jpeg"),
+              data: fileBase64
+            }
+          },
+          promptText
+        ];
+
         const geminiRes = await googleAI.models.generateContent({
           model: "gemini-2.5-flash",
-          contents: prompt,
+          contents: contentsPayload,
           config: { responseMimeType: "application/json" }
         });
         responseText = geminiRes.text;
       } catch (gErr) {
-        console.error("⚠️ Gemini API error, trying Groq fallback:", gErr.message);
+        console.error("⚠️ Gemini Vision API error, falling back to text prompt:", gErr.message);
+        try {
+          const textRes = await googleAI.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: promptText,
+            config: { responseMimeType: "application/json" }
+          });
+          responseText = textRes.text;
+        } catch (err2) {
+          console.error("⚠️ Gemini Fallback error:", err2.message);
+        }
       }
     }
 
     // 2. Fallback to Groq
     if (!responseText && groq) {
+      console.log("🧠 Sending request to Groq Fallback...");
       const groqRes = await groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: prompt }],
+        messages: [{ role: "user", content: promptText }],
         response_format: { type: "json_object" },
       });
       responseText = groqRes.choices[0].message.content;
@@ -404,6 +430,8 @@ Return STRICT JSON matching this exact structure:
 
     responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
     const parsed = JSON.parse(responseText);
+
+    console.log("✅ Multi-modal analysis complete successfully");
 
     // Save to DB if user is logged in
     if (req.user && req.user.id) {
@@ -422,7 +450,6 @@ Return STRICT JSON matching this exact structure:
     console.error("❌ ERROR in /analyze:", error);
     return res.status(500).json({ success: false, error: "An error occurred while analyzing the medical report." });
   } finally {
-    // Guarantee file deletion
     if (filePath && fs.existsSync(filePath)) {
       try { fs.unlinkSync(filePath); } catch (e) {}
     }
@@ -441,7 +468,6 @@ app.post("/api/chat", aiLimiter, optionalAuthenticateToken, async (req, res) => 
       return res.status(400).json({ success: false, error: "Messages array is required." });
     }
 
-    // Validate and limit length of chat messages
     const sanitizedMessages = messages.slice(-10).map(m => ({
       role: m.role === "user" ? "user" : "assistant",
       content: typeof m.content === "string" ? m.content.substring(0, 2000) : ""
@@ -453,11 +479,14 @@ app.post("/api/chat", aiLimiter, optionalAuthenticateToken, async (req, res) => 
     if (reportContext && typeof reportContext === "object") {
       contextPrompt = `
 PATIENT MEDICAL REPORT CONTEXT:
+- Patient Name: ${reportContext.patientInfo?.name || 'Patient'} (Age: ${reportContext.patientInfo?.age || 'N/A'}, Gender: ${reportContext.patientInfo?.gender || 'N/A'})
 - Health Score: ${reportContext.healthScore || 'N/A'}/100 (${reportContext.riskLevel || 'Normal'} Risk)
 - Clinical Summary: ${reportContext.summaryPatientFriendly || reportContext.summary || 'None'}
+- Diagnoses: ${JSON.stringify(reportContext.diagnoses || [])}
 - Abnormal Findings: ${JSON.stringify(reportContext.alerts || reportContext.abnormalFindings || [])}
 - Biomarkers: ${JSON.stringify(reportContext.biomarkers || [])}
-- Medicines: ${JSON.stringify(reportContext.medicines || [])}
+- Prescribed Medicines: ${JSON.stringify(reportContext.medicines || [])}
+- Doctor Suggestions: ${reportContext.doctorSuggestion || 'N/A'}
 `;
     }
 
