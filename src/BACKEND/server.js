@@ -95,28 +95,33 @@ if (!fs.existsSync(uploadDir)) {
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "image/jpeg",
+  "image/jpg",
   "image/png",
   "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/bmp",
   "text/plain",
-  "text/csv"
+  "text/csv",
+  "application/octet-stream"
 ]);
 
-const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".txt", ".csv"]);
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp", ".txt", ".csv", ""]);
 
 const upload = multer({
   dest: uploadDir,
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: 25 * 1024 * 1024, // 25MB for high-res mobile camera photos
     files: 1
   },
   fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const mime = file.mimetype.toLowerCase();
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const mime = (file.mimetype || "").toLowerCase();
 
-    if (ALLOWED_MIME_TYPES.has(mime) || ALLOWED_EXTENSIONS.has(ext)) {
+    if (ALLOWED_MIME_TYPES.has(mime) || ALLOWED_EXTENSIONS.has(ext) || mime.startsWith("image/") || mime.startsWith("text/")) {
       cb(null, true);
     } else {
-      cb(new Error("Security Error: Invalid file type. Only PDF, PNG, JPG, WebP, TXT, and CSV files are allowed."));
+      cb(new Error("Invalid file format. Please upload a PDF or an image (JPG, PNG, WebP, HEIC)."));
     }
   }
 });

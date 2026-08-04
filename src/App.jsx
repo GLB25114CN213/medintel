@@ -12,7 +12,9 @@ import {
   Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
-const API_BASE = typeof window !== 'undefined' && window.location.port === '5001' ? '' : 'http://localhost:5001';
+const API_BASE = typeof window !== 'undefined'
+  ? (window.location.port === '5001' ? '' : `${window.location.protocol}//${window.location.hostname}:5001`)
+  : '';
 
 export default function MedIntelAI() {
   // Authentication & Session States
@@ -251,8 +253,8 @@ export default function MedIntelAI() {
         fetchSavedReports(token);
       }
     } catch (error) {
-      console.error(error);
-      alert("Server error while analyzing report");
+      console.error("Report Analysis Error:", error);
+      alert(`Report analysis failed: ${error.message || "Network error. Check connection or try a smaller file."}`);
     } finally {
       setLoading(false);
     }
