@@ -2,279 +2,576 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import fs from "fs";
+import path from "path";
+import crypto from "crypto";
 import dotenv from "dotenv";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
-console.log("✅ RUNNING NEW GEMINI SDK SERVER");
+import pdfParse from "pdf-parse";
+import Tesseract from "tesseract.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import db, { runQuery, getQuery, allQuery } from "./db.js";
+import { authenticateToken, optionalAuthenticateToken } from "./authMiddleware.js";
 
 dotenv.config();
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// ----------------------------------------------------
+// SECURITY HEADERS & HYGIENE (Helmet & CORS)
+// ----------------------------------------------------
+
+app.disable("x-powered-by");
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.tailwindcss.com"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        connectSrc: ["'self'", "http://localhost:5001", "http://127.0.0.1:5001"],
+        fontSrc: ["'self'", "https:", "data:"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: null,
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+app.use(cors({
+  origin: true,
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+app.use(express.json({ limit: "1mb" }));
+
+// ----------------------------------------------------
+// RATE LIMITING (Brute force & DoS Prevention)
+// ----------------------------------------------------
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: { success: false, error: "Too many login/registration attempts. Please try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { success: false, error: "AI request rate limit exceeded. Please wait a few minutes before trying again." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: { success: false, error: "Too many requests. Please try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use("/api/", generalLimiter);
+
+// ----------------------------------------------------
+// SECURE FILE UPLOAD CONFIGURATION (Multer)
+// ----------------------------------------------------
+
+const uploadDir = path.resolve("uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "text/plain",
+  "text/csv"
+]);
+
+const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".txt", ".csv"]);
 
 const upload = multer({
-  dest: "uploads/",
+  dest: uploadDir,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const mime = file.mimetype.toLowerCase();
+
+    if (ALLOWED_MIME_TYPES.has(mime) || ALLOWED_EXTENSIONS.has(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Security Error: Invalid file type. Only PDF, PNG, JPG, WebP, TXT, and CSV files are allowed."));
+    }
+  }
 });
-const apiKey = process.env.GEMINI_API_KEY;
 
-console.log("KEY STARTS WITH:", apiKey?.substring(0, 10));
+// ----------------------------------------------------
+// SECURE API KEYS & JWT SETUP
+// ----------------------------------------------------
 
-if (!apiKey) {
-  console.log("❌ GEMINI_API_KEY missing in .env");
-  process.exit(1);
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString("hex");
+
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+const googleAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+
+console.log("🔒 MedIntel Secure Production Backend Initializing...");
+console.log("  - Security Headers (Helmet): Active");
+console.log("  - Rate Limiting: Active");
+console.log("  - Input Validation & File Sanitization: Active");
+console.log("  - Google AI Studio (Gemini):", googleAI ? "Enabled" : "Disabled");
+console.log("  - Groq AI SDK:", groq ? "Enabled" : "Disabled");
+
+// Serve frontend static assets safely
+const distDir = path.resolve("dist");
+if (fs.existsSync(distDir)) {
+  console.log("📦 Serving compiled production frontend from dist/");
+  app.use(express.static(distDir));
 }
-const genAI = new GoogleGenAI({ apiKey });
-console.log("✅ Gemini initialized");
 
-app.get("/", (req, res) => {
-  res.send("🚀 MedIntel AI Backend Running");
-});
+// Input Validation Helpers
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-app.post("/analyze", upload.single("file"), async (req, res) => {
+function validateRegistrationInput(email, password, full_name) {
+  if (!email || !password || !full_name) {
+    return "All fields (email, password, full_name) are required.";
+  }
+  if (typeof email !== "string" || email.length > 254 || !EMAIL_REGEX.test(email.trim())) {
+    return "Please enter a valid email address.";
+  }
+  if (typeof full_name !== "string" || full_name.trim().length < 2 || full_name.length > 100) {
+    return "Full name must be between 2 and 100 characters.";
+  }
+  if (typeof password !== "string" || password.length < 8 || password.length > 128) {
+    return "Password must be between 8 and 128 characters.";
+  }
+  return null;
+}
+
+// ----------------------------------------------------
+// AUTHENTICATION ENDPOINTS
+// ----------------------------------------------------
+
+app.post("/api/auth/register", authLimiter, async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No file uploaded",
-      })
+    const { email, password, full_name } = req.body;
+
+    const validationError = validateRegistrationInput(email, password, full_name);
+    if (validationError) {
+      return res.status(400).json({ success: false, error: validationError });
     }
 
-    console.log("📄 File received:", req.file.originalname);            //const result = await model.generateContent([prompt, imagePart]);
-const result = await genAI.models.generateContent({
-  model: "gemini-2.5-flash",
-  contents: [
-    {
-      role: "user",
-      parts: [
-        { text: prompt },
-        {
-          inlineData: {
-            mimeType: imagePart.inlineData.mimeType,
-            data: imagePart.inlineData.data,
-          },
-        },
-      ],
-    },
-  ],
-  config: {
-    responseMimeType: "application/json",
-  },
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanName = full_name.trim();
+
+    const existingUser = await getQuery("SELECT id FROM users WHERE email = ?", [cleanEmail]);
+    if (existingUser) {
+      return res.status(400).json({ success: false, error: "An account with this email already exists." });
+    }
+
+    // Hash password with 12 bcrypt salt rounds
+    const password_hash = await bcrypt.hash(password, 12);
+    const result = await runQuery(
+      "INSERT INTO users (email, password_hash, full_name) VALUES (?, ?, ?)",
+      [cleanEmail, password_hash, cleanName]
+    );
+
+    const user = { id: result.id, email: cleanEmail, full_name: cleanName };
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
+
+    console.log("👤 New user registered:", user.email);
+    return res.json({ success: true, token, user });
+  } catch (error) {
+    console.error("❌ Register Error:", error);
+    return res.status(500).json({ success: false, error: "Registration failed due to a server error." });
+  }
 });
 
-   //let responseText = result.response.text();
+app.post("/api/auth/login", authLimiter, async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-    ;
+    if (!email || !password || typeof email !== "string" || typeof password !== "string") {
+      return res.status(400).json({ success: false, error: "Email and password are required." });
+    }
 
-   let processedBuffer;
+    const cleanEmail = email.toLowerCase().trim();
+    const userInDb = await getQuery("SELECT * FROM users WHERE email = ?", [cleanEmail]);
+    if (!userInDb) {
+      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    }
 
-if (req.file.mimetype.startsWith("image/")) {
-  processedBuffer = await sharp(req.file.path)
-    .resize({ width: 2000, withoutEnlargement: false })
-    .grayscale()
-    .normalize()
-    .sharpen()
-    .jpeg({ quality: 95 })
-    .toBuffer();
-} else {
-  processedBuffer = fs.readFileSync(req.file.path);
-}
+    const validPassword = await bcrypt.compare(password, userInDb.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    }
 
-const imagePart = {
-  inlineData: {
-    data: processedBuffer.toString("base64"),
-    mimeType: "image/jpeg",
-  },
-};
-    
+    const user = { id: userInDb.id, email: userInDb.email, full_name: userInDb.full_name };
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
 
-    
-const prompt = `
-You are MedIntel AI, an advanced AI medical report analyzer and OCR assistant.
+    console.log("🔓 User logged in:", user.email);
+    return res.json({ success: true, token, user });
+  } catch (error) {
+    console.error("❌ Login Error:", error);
+    return res.status(500).json({ success: false, error: "Login failed due to a server error." });
+  }
+});
 
-IMPORTANT IMAGE READING RULES:
-- The uploaded image may be blurry, low-light, tilted, cropped, scanned, or handwritten.
-- Carefully read printed text and handwriting.
-- Try to infer medical terms from partial/unclear text using context.
-- Do NOT guess exact values if they are unreadable.
-- If any value is unclear, write "uncertain" in the value field.
-- If normal range is not visible, write "not provided".
-- If handwriting is not readable, mention it in summary.
-- Never invent biomarkers that are not visible.
+app.get("/api/auth/me", authenticateToken, async (req, res) => {
+  try {
+    const userInDb = await getQuery("SELECT id, email, full_name, created_at FROM users WHERE id = ?", [req.user.id]);
+    if (!userInDb) {
+      return res.status(404).json({ success: false, error: "User profile not found." });
+    }
+    return res.json({ success: true, user: userInDb });
+  } catch (error) {
+    console.error("❌ Auth Me Error:", error);
+    return res.status(500).json({ success: false, error: "Failed to retrieve user profile." });
+  }
+});
 
-TASKS:
-1. Detect whether uploaded image is a real medical report, prescription, lab test, pathology report, radiology report, discharge summary, ECG report, or doctor note.
+// ----------------------------------------------------
+// AI REPORT ANALYZER ENDPOINT
+// ----------------------------------------------------
 
-2. If image is NOT medical-related, return ONLY:
-{
-  "isMedicalReport": false,
-  "message": "Invalid medical report"
-}
+app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ success: false, error: err.message || "File upload rejected." });
+    }
+    next();
+  });
+}, async (req, res) => {
+  let filePath = req.file?.path;
 
-3. If image IS medical-related:
-- Extract visible biomarkers, medicines, diagnoses, test values, observations, and doctor notes
-- Explain each visible value
-- Detect abnormal findings
-- Mention risk level
-- Provide simple explanation
-- Provide professional explanation
-- Suggest specialist doctor
-- Mention emergency warning signs
-- Give health recommendations
-- Give lifestyle advice
-- Give nutrition advice
-- Suggest questions to ask doctor
-- Suggest follow-up tests
-Calculate a healthScore from 0-100.
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "No file uploaded." });
+    }
 
-Rules:
-- Start from 100.
-- Deduct points for abnormal biomarkers.
-- Mild abnormality = -5 points.
-- Moderate abnormality = -10 points.
-- Severe abnormality = -20 points.
-- High CRP, severe anemia, critical findings should reduce score significantly.
-- Return final score in "healthScore".
-- Explain score in "healthScoreReason".
+    const originalName = path.basename(req.file.originalname);
+    console.log("📄 File received:", originalName, "| MimeType:", req.file.mimetype);
 
-Do NOT return a default score.
+    let extractedText = "";
+    const fileBuffer = fs.readFileSync(filePath);
+    const mimeType = req.file.mimetype || "";
+    const ext = path.extname(originalName).toLowerCase();
 
-Return STRICT JSON ONLY. 
-Return STRICT JSON ONLY.
+    if (mimeType === "application/pdf" || ext === ".pdf") {
+      console.log("🔍 Extracting text from PDF...");
+      try {
+        const parseFunc = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
+        const pdfData = await parseFunc(fileBuffer);
+        extractedText = pdfData.text || "";
+      } catch (pdfErr) {
+        console.error("⚠️ PDF extraction warning:", pdfErr.message);
+      }
+    } else if (mimeType.startsWith("text/") || ext === ".txt" || ext === ".csv") {
+      extractedText = fileBuffer.toString("utf8");
+    }
 
-Example format:
+    if (!extractedText.trim() && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].includes(ext))) {
+      console.log("🖼️ Performing OCR image recognition via Tesseract...");
+      try {
+        const processedBuffer = await sharp(filePath)
+          .resize({ width: 2000, withoutEnlargement: true })
+          .grayscale()
+          .normalize()
+          .sharpen()
+          .jpeg({ quality: 95 })
+          .toBuffer();
 
+        const ocrResult = await Tesseract.recognize(processedBuffer, "eng");
+        extractedText = ocrResult.data.text || "";
+      } catch (ocrErr) {
+        console.error("⚠️ OCR warning:", ocrErr.message);
+      }
+    }
+
+    if (!extractedText.trim()) {
+      extractedText = `File Name: ${originalName}. Medical document attached.`;
+    }
+
+    const sanitizedExtractedText = extractedText.substring(0, 8000);
+
+    const prompt = `
+You are MedIntel AI, an expert OCR, handwriting analysis, and medical report analysis assistant.
+
+Your task is to accurately read, analyze, and transcribe the contents of the uploaded image/document:
+DOCUMENT OCR & HANDWRITING INSTRUCTIONS:
+1. Carefully inspect every part of the text before responding.
+2. Preserve original formatting (headings, lists, tables, etc.).
+3. If a word or value is unclear:
+   - Infer it only when there is strong contextual evidence: [likely: word].
+   - If text cannot be determined confidently: [unclear]. Do NOT invent words.
+4. For equations, medical symbols, and diagrams, reproduce accurately using LaTeX or plain text.
+5. In "imageQualityNotes", provide a brief assessment summary of legibility, contrast, and handwriting clarity.
+
+DOCUMENT TEXT CONTENT:
+${sanitizedExtractedText}
+
+Return STRICT JSON matching this exact structure:
 {
   "isMedicalReport": true,
-
-  "healthScore": 0,
-  "healthScoreReason": "",
-
-  "summary": "Patient shows mild vitamin D deficiency.",
-
+  "healthScore": 75,
+  "healthScoreReason": "Explanation for health score based on findings.",
+  "summary": "Clinical summary of the patient report.",
   "riskLevel": "Moderate",
-Use this exact JSON format:
-
-{
-  "isMedicalReport": true,
-  "summary": "",
-  "riskLevel": "Low / Moderate / High / Unclear",
-  "simpleExplanation": "",
-  "professionalExplanation": "",
-  "abnormalFindings": [],
+  "simpleExplanation": "Easy to understand patient-friendly explanation.",
+  "professionalExplanation": "Detailed technical medical analysis.",
+  "abnormalFindings": [
+    { "name": "Biomarker Name", "value": "Abnormal Value" }
+  ],
   "biomarkers": [
     {
-      "name": "",
-      "value": "",
-      "status": "Normal / Low / High / Abnormal / Unclear",
-      "normalRange": "",
-      "meaning": "",
-      "confidence": "High / Medium / Low"
+      "name": "Biomarker Name",
+      "value": "12.5",
+      "status": "Normal",
+      "normalRange": "12.0 - 15.0",
+      "meaning": "Clinical meaning",
+      "confidence": "High"
     }
   ],
   "medicines": [
     {
-      "name": "",
-      "dose": "",
-      "frequency": "",
-      "purpose": "",
-      "confidence": "High / Medium / Low"
+      "name": "Medicine Name",
+      "dose": "500mg",
+      "frequency": "Once daily",
+      "purpose": "Purpose of medication",
+      "confidence": "High"
     }
   ],
-  "recommendations": [],
-  "lifestyle": [],
-  "nutrition": [],
-  "questionsForDoctor": [],
-  "followUpTests": [],
-  "doctorSuggestion": "",
+  "recommendations": ["Recommendation 1"],
+  "lifestyle": ["Lifestyle advice 1"],
+  "lifestyleRecommendations": ["Lifestyle advice 1"],
+  "nutrition": ["Nutrition advice 1"],
+  "dietRecommendations": ["Nutrition advice 1"],
+  "questionsForDoctor": ["Question for doctor 1"],
+  "doctorQuestions": ["Question for doctor 1"],
+  "followUpTests": ["Follow up test 1"],
+  "doctorSuggestion": "General Physician / Specialist",
   "emergency": false,
   "emergencyWarningSigns": [],
-  "imageQualityNotes": "",
-  "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified doctor."
+  "imageQualityNotes": "Legibility and handwriting clarity assessment summary.",
+  "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified medical doctor."
 }
-
 `;
 
-    console.log("🧠 Sending to Gemini...");
+    let responseText = "";
 
-    const result = await genAI.models.generateContent({
-  model: modelName,
-  contents: [
-    {
-      role: "user",
-      parts: [
-        { text: prompt },
-        {
-          inlineData: {
-            mimeType: imagePart.inlineData.mimeType,
-            data: imagePart.inlineData.data,
-          },
-        },
-      ],
-    },
-  ],
-  config: {
-    responseMimeType: "application/json",
-  },
-});
-
-let responseText = result.text;
-
-    // ✅ FIX: Clean up JSON
-    responseText = responseText
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-
-    // ✅ FIX: Parse JSON
-    let parsed;
-    try {
-      parsed = JSON.parse(responseText);
-    } catch (jsonError) {
-      console.error("❌ Invalid JSON from Gemini:");
-      console.log(responseText);
-
-      // Clean up file
-      fs.unlinkSync(req.file.path);
-
-      return res.status(500).json({
-        success: false,
-        error: "Gemini returned invalid JSON",
-        raw: responseText,
-      });
-    }
-
-    console.log("✅ Analysis complete");
-
-    // ✅ FIX: Clean up file
-    fs.unlinkSync(req.file.path);
-
-    // ✅ FIX: Send ONCE with parsed JSON
-    res.json({
-      success: true,
-      analysis: parsed,
-    });
-
-  } catch (error) {
-    console.error("❌ ERROR:", error);
-
-    // Clean up file if it exists
-    if (req.file) {
+    // 1. Try Google AI Studio Gemini API first
+    if (googleAI) {
       try {
-        fs.unlinkSync(req.file.path);
-      } catch (e) {
-        // File already deleted
+        const geminiRes = await googleAI.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: prompt,
+          config: { responseMimeType: "application/json" }
+        });
+        responseText = geminiRes.text;
+      } catch (gErr) {
+        console.error("⚠️ Gemini API error, trying Groq fallback:", gErr.message);
       }
     }
 
-    res.status(500).json({
-      success: false,
-      error: error.message,
-    });
+    // 2. Fallback to Groq
+    if (!responseText && groq) {
+      const groqRes = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      });
+      responseText = groqRes.choices[0].message.content;
+    }
+
+    if (!responseText) {
+      throw new Error("Unable to contact AI analysis services.");
+    }
+
+    responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(responseText);
+
+    // Save to DB if user is logged in
+    if (req.user && req.user.id) {
+      try {
+        await runQuery(
+          "INSERT INTO analyses (user_id, filename, analysis_data, health_score) VALUES (?, ?, ?, ?)",
+          [req.user.id, originalName, JSON.stringify(parsed), Number(parsed.healthScore) || 75]
+        );
+      } catch (dbErr) {
+        console.error("⚠️ Failed to save analysis to DB:", dbErr.message);
+      }
+    }
+
+    return res.json({ success: true, analysis: parsed });
+  } catch (error) {
+    console.error("❌ ERROR in /analyze:", error);
+    return res.status(500).json({ success: false, error: "An error occurred while analyzing the medical report." });
+  } finally {
+    // Guarantee file deletion
+    if (filePath && fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch (e) {}
+    }
   }
 });
 
-app.listen(5000, () => {
-  console.log("🚀 Backend running on port 5000");
+// ----------------------------------------------------
+// PRODUCTION REAL-TIME AI CHAT ENDPOINT
+// ----------------------------------------------------
+
+app.post("/api/chat", aiLimiter, optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { messages, reportContext } = req.body;
+
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ success: false, error: "Messages array is required." });
+    }
+
+    // Validate and limit length of chat messages
+    const sanitizedMessages = messages.slice(-10).map(m => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: typeof m.content === "string" ? m.content.substring(0, 2000) : ""
+    }));
+
+    const lastUserMessage = sanitizedMessages[sanitizedMessages.length - 1].content;
+
+    let contextPrompt = "";
+    if (reportContext && typeof reportContext === "object") {
+      contextPrompt = `
+PATIENT MEDICAL REPORT CONTEXT:
+- Health Score: ${reportContext.healthScore || 'N/A'}/100 (${reportContext.riskLevel || 'Normal'} Risk)
+- Clinical Summary: ${reportContext.summaryPatientFriendly || reportContext.summary || 'None'}
+- Abnormal Findings: ${JSON.stringify(reportContext.alerts || reportContext.abnormalFindings || [])}
+- Biomarkers: ${JSON.stringify(reportContext.biomarkers || [])}
+- Medicines: ${JSON.stringify(reportContext.medicines || [])}
+`;
+    }
+
+    const chatSystemInstruction = `
+You are MedIntel AI, a compassionate, highly knowledgeable, and clinical medical AI assistant.
+Your goal is to explain health metrics, medical report findings, lab test values, medications, lifestyle changes, and answer patient questions clearly.
+
+${contextPrompt}
+
+INSTRUCTIONS:
+1. Provide accurate, empathetic, and structured medical explanations.
+2. Directly reference the patient's report findings whenever relevant.
+3. Keep answers concise, clear, and easy to understand for patients.
+4. Always emphasize that this AI guidance is educational and recommend consulting a doctor.
+`;
+
+    const conversationHistory = sanitizedMessages.map(m => `${m.role === 'user' ? 'Patient' : 'MedIntel AI'}: ${m.content}`).join("\n\n");
+    const fullChatPrompt = `${chatSystemInstruction}\n\nCONVERSATION HISTORY:\n${conversationHistory}\n\nMedIntel AI:`;
+
+    let replyText = "";
+
+    // 1. Try Google AI Studio Gemini API first
+    if (googleAI) {
+      try {
+        const geminiChatRes = await googleAI.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: fullChatPrompt,
+        });
+        replyText = geminiChatRes.text;
+      } catch (gErr) {
+        console.error("⚠️ Gemini Chat error, trying Groq fallback:", gErr.message);
+      }
+    }
+
+    // 2. Fallback to Groq
+    if (!replyText && groq) {
+      const groqChatRes = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: chatSystemInstruction },
+          ...sanitizedMessages.map(m => ({ role: m.role, content: m.content }))
+        ],
+      });
+      replyText = groqChatRes.choices[0].message.content;
+    }
+
+    if (!replyText) {
+      replyText = "I'm sorry, I encountered an issue connecting to the medical AI service. Please try again.";
+    }
+
+    // Save message to DB if user is logged in
+    if (req.user && req.user.id) {
+      try {
+        await runQuery("INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)", [req.user.id, "user", lastUserMessage]);
+        await runQuery("INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)", [req.user.id, "assistant", replyText]);
+      } catch (e) {
+        // Ignored
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: { role: "assistant", content: replyText }
+    });
+
+  } catch (error) {
+    console.error("❌ ERROR in /api/chat:", error);
+    return res.status(500).json({ success: false, error: "Chat service encountered an internal error." });
+  }
+});
+
+// ----------------------------------------------------
+// SAVED REPORTS & CHAT HISTORY ENDPOINTS
+// ----------------------------------------------------
+
+app.get("/api/reports", authenticateToken, async (req, res) => {
+  try {
+    const rows = await allQuery("SELECT id, filename, analysis_data, health_score, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC", [req.user.id]);
+    const reports = rows.map(r => ({
+      id: r.id,
+      filename: r.filename,
+      analysis: JSON.parse(r.analysis_data),
+      health_score: r.health_score,
+      created_at: r.created_at
+    }));
+    return res.json({ success: true, reports });
+  } catch (error) {
+    console.error("❌ Get Reports Error:", error);
+    return res.status(500).json({ success: false, error: "Failed to retrieve saved reports." });
+  }
+});
+
+app.get("/api/chat/history", authenticateToken, async (req, res) => {
+  try {
+    const rows = await allQuery("SELECT role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY id ASC", [req.user.id]);
+    return res.json({ success: true, messages: rows });
+  } catch (error) {
+    console.error("❌ Get Chat History Error:", error);
+    return res.status(500).json({ success: false, error: "Failed to retrieve chat history." });
+  }
+});
+
+// SPA Fallback Route
+if (fs.existsSync(distDir)) {
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api") && req.path !== "/analyze") {
+      return res.sendFile(path.join(distDir, "index.html"));
+    }
+    next();
+  });
+}
+
+const PORT = process.env.PORT || 5001;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 MedIntel Hardened Production Backend running on port ${PORT}`);
 });

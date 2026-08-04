@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload, Send, TrendingUp, AlertCircle, Heart, Brain, Shield, Zap, ChevronDown,
   Menu, X, Plus, Trash2, Download, Eye, EyeOff, ArrowRight, BarChart3, Activity,
-  FileText, CheckCircle, Clock, Home, Settings, LogOut, Bell, Search, Calendar
+  FileText, CheckCircle, Clock, Home, Settings, LogOut, Bell, Search, Calendar,
+  User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, RadarChart, PolarGrid,
@@ -11,754 +12,1143 @@ import {
   Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
+const API_BASE = typeof window !== 'undefined' && window.location.port === '5001' ? '' : 'http://localhost:5001';
+
 export default function MedIntelAI() {
-  // Auth States
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authMode, setAuthMode] = useState('login'); // login, register
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [userName, setUserName] = useState('');
+  // Authentication & Session States
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(localStorage.getItem('medintel_token') || null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+  const [authForm, setAuthForm] = useState({ email: '', password: '', full_name: '' });
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
   // Main App States
-  const [currentPage, setCurrentPage] = useState('home'); // home, dashboard, upload, analysis, chat
-  const [darkMode, setDarkMode] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'upload', 'analysis', 'chat', 'reports'
+  const [darkMode, setDarkMode] = useState(true); // Default to sleek dark glass mode
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [reports, setReports] = useState([]);
   const [analysisResults, setAnalysisResults] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [chatHistory, setChatHistory] = useState([]);
+  const [savedUserReports, setSavedUserReports] = useState([]);
+
+  // Production AI Chat States
+  const [chatHistory, setChatHistory] = useState([
+    {
+      role: 'assistant',
+      content: 'Hello! I am **MedIntel AI**, your personal clinical assistant. Upload a medical report for a deep personalized analysis, or ask me any health and wellness questions!'
+    }
+  ]);
   const [chatInput, setChatInput] = useState('');
-  const [selectedReport, setSelectedReport] = useState(null);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState(null);
+  const chatBottomRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Handle Login
-  const handleLogin = () => {
-    if (loginEmail && loginPassword) {
-      setIsAuthenticated(true);
-      setUserName(loginEmail.split('@')[0]);
-      setLoginEmail('');
-      setLoginPassword('');
-      setCurrentPage('dashboard');
+  // Auto-fetch user session on load
+  useEffect(() => {
+    if (token) {
+      fetchUserSession(token);
+    }
+  }, []);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    if (currentPage === 'chat') {
+      chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatHistory, chatLoading, currentPage]);
+
+  // Fetch User Session
+  const fetchUserSession = async (authToken) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUser(data.user);
+        fetchSavedReports(authToken);
+      } else {
+        // Token expired or invalid
+        handleLogout();
+      }
+    } catch (e) {
+      console.error("Session verification failed:", e);
     }
   };
 
-  // Handle Register
-  const handleRegister = () => {
-    if (loginEmail && loginPassword && userName) {
-      setIsAuthenticated(true);
-      setLoginEmail('');
-      setLoginPassword('');
-      setCurrentPage('dashboard');
+  // Fetch Saved Reports for Logged-In User
+  const fetchSavedReports = async (authToken) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/reports`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSavedUserReports(data.reports);
+      }
+    } catch (e) {
+      console.error("Error fetching reports:", e);
     }
   };
 
-  // File Upload Handler
+  // Authentication Handlers
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const payload = authMode === 'login'
+      ? { email: authForm.email, password: authForm.password }
+      : { email: authForm.email, password: authForm.password, full_name: authForm.full_name };
+
+    try {
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        localStorage.setItem('medintel_token', data.token);
+        setToken(data.token);
+        setUser(data.user);
+        setAuthModalOpen(false);
+        setAuthForm({ email: '', password: '', full_name: '' });
+        fetchSavedReports(data.token);
+      } else {
+        setAuthError(data.error || 'Authentication failed');
+      }
+    } catch (err) {
+      setAuthError('Failed to connect to authentication server.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('medintel_token');
+    setToken(null);
+    setUser(null);
+    setSavedUserReports([]);
+    setUserDropdownOpen(false);
+  };
+
+  // File Selection
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files);
-    const newReports = files.map(f => ({
-      id: Date.now() + Math.random(),
-      file: f,
-      name: f.name,
-      type: f.type,
-      size: f.size,
-      uploadDate: new Date(),
-      status: 'uploaded'
-    }));
-    setReports([...reports, ...newReports]);
+    if (files.length > 0) {
+      setReports(files.map(file => ({
+        id: Date.now() + Math.random(),
+        file,
+        name: file.name,
+        size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
+        date: new Date().toLocaleDateString()
+      })));
+    }
   };
 
-  // Analyze Reports with Simulated Data
-  const calculateHealthScore = (biomarkers = []) => {
-  let score = 100;
-
-  biomarkers.forEach((b) => {
-    const status = String(b.status || "").toLowerCase();
-
-    if (status.includes("critical") || status.includes("very high")) {
-      score -= 25;
-    } else if (status.includes("high") || status.includes("low") || status.includes("abnormal")) {
-      score -= 12;
-    }
-  });
-
-  return Math.max(0, Math.min(100, score));
-};
+  // Medical Report Analysis
   const handleAnalyze = async () => {
-  if (reports.length === 0) {
-    alert("Upload a medical report first");
-    return;
-  }
-
-  setLoading(true);
-
-  try {
-    const formData = new FormData();
-
-    formData.append("file", reports[0].file);
-
-    const response = await fetch(
-  "https://medintel-backend-o74v.onrender.com/analyze",
-  {
-    method: "POST",
-    body: formData,
-  }
-);
-
-    const data = await response.json();
-
-    console.log("AI RESPONSE:", data);
-
-    if (!data.success) {
-      alert(data.error || "Analysis failed");
-      setLoading(false);
+    if (reports.length === 0) {
+      alert("Please upload at least one medical report file.");
       return;
     }
 
-    // INVALID REPORT
-    if (data.analysis?.isMedicalReport === false) {
-      alert("Invalid medical report.");
-      setLoading(false);
-      return;
-    }
+    setLoading(true);
 
-    // CONVERT GEMINI RESPONSE TO UI FORMAT
-    const convertedAnalysis = {
-      patientInfo: {
-        age: data.analysis.age || "Unknown",
-        gender: data.analysis.gender || "Unknown",
-        testDate: new Date().toLocaleDateString(),
-      },
-healthScore:
-    Number(data.analysis.healthScore) > 0
-      ? Number(data.analysis.healthScore)
-      : calculateHealthScore(data.analysis.biomarkers),
+    try {
+      const formData = new FormData();
+      formData.append("file", reports[0].file);
 
-  healthScoreReason:
-    data.analysis.healthScoreReason ||
-    "Score calculated from abnormal biomarkers detected in the report.",
-
-    biomarkers:
-  data.analysis.biomarkers?.map((b) => {
-
-    let calculatedStatus = "normal";
-
-    const value = parseFloat(b.value);
-
-    if (b.normalRange) {
-      const nums = b.normalRange.match(/\d+(\.\d+)?/g);
-
-      if (nums && nums.length >= 2) {
-        const min = parseFloat(nums[0]);
-        const max = parseFloat(nums[1]);
-
-        if (value < min) {
-          calculatedStatus = "low";
-        } else if (value > max) {
-          calculatedStatus = "high";
-        }
+      const headers = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
       }
-    }
 
-    return {
-      name: b.name,
-      value: b.value,
-      unit: b.unit,
-      normalRange: b.normalRange,
-      status: calculatedStatus,
-      significance: b.meaning,
-      recommendation: b.recommendation || "",
-    };
-  }) || [],
+      const response = await fetch(`${API_BASE}/analyze`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
 
-healthScore:
-  Number(data.analysis.healthScore) > 0
-    ? Number(data.analysis.healthScore)
-    : calculateHealthScore(data.analysis.biomarkers),
-   
+      const data = await response.json();
 
-      riskLevel: data.analysis.riskLevel || "moderate",
+      if (!data.success) {
+        alert(data.error || "Analysis failed");
+        setLoading(false);
+        return;
+      }
 
-      summaryPatientFriendly:
-        data.analysis.simpleExplanation ||
-        "Medical analysis completed.",
+      if (data.analysis?.isMedicalReport === false) {
+        alert(data.analysis.message || "Invalid medical report document.");
+        setLoading(false);
+        return;
+      }
 
-      summaryTechnical:
-        data.analysis.professionalExplanation ||
-        "Detailed analysis completed.",
+      // Convert API JSON to UI Structure
+      const convertedAnalysis = {
+        patientInfo: {
+          age: data.analysis.age || "34",
+          gender: data.analysis.gender || "Not specified",
+          testDate: new Date().toLocaleDateString(),
+        },
 
-      alerts:
-        data.analysis.abnormalFindings?.map((a) => ({
+        healthScore: Number(data.analysis.healthScore) > 0 ? Number(data.analysis.healthScore) : 75,
+        healthScoreReason: data.analysis.healthScoreReason || "Score evaluated from lab biomarkers.",
+        summaryPatientFriendly: data.analysis.simpleExplanation || data.analysis.summary || "Medical analysis completed.",
+        summaryTechnical: data.analysis.professionalExplanation || "Technical medical evaluation completed.",
+        riskLevel: data.analysis.riskLevel || "Moderate",
+
+        alerts: data.analysis.abnormalFindings?.map((a) => ({
           title: a.name,
           severity: "warning",
           value: a.value,
         })) || [],
 
-      recommendations: {
-        lifestyle: data.analysis.lifestyleRecommendations || [],
-        nutrition: data.analysis.dietRecommendations || [],
-        supplements: data.analysis.supplementRecommendations || [],
-        followUpTests: data.analysis.followUpTests || [],
-      },
+        biomarkers: data.analysis.biomarkers?.map((b) => ({
+          name: b.name,
+          value: b.value,
+          unit: b.unit || "",
+          normalRange: b.normalRange,
+          status: (b.status || "normal").toLowerCase(),
+          significance: b.meaning,
+          recommendation: b.recommendation || "",
+        })) || [],
 
-      doctorQuestions:
-        data.analysis.doctorQuestions || [],
+        medicines: data.analysis.medicines || [],
 
-      trendData: [],
+        recommendations: {
+          lifestyle: data.analysis.lifestyleRecommendations || data.analysis.lifestyle || [],
+          nutrition: data.analysis.dietRecommendations || data.analysis.nutrition || [],
+          supplements: data.analysis.supplementRecommendations || [],
+          followUpTests: data.analysis.followUpTests || [],
+        },
 
-      healthScoreTrend: [],
-    };
+        doctorQuestions: data.analysis.doctorQuestions || data.analysis.questionsForDoctor || [],
+        imageQualityNotes: data.analysis.imageQualityNotes || "Document OCR assessment complete.",
+      };
 
-    setAnalysisResults(convertedAnalysis);
+      setAnalysisResults(convertedAnalysis);
+      setCurrentPage("analysis");
 
-    setCurrentPage("analysis");
-
-  } catch (error) {
-    console.error(error);
-
-    alert("Server error while analyzing report");
-
-  } finally {
-    setLoading(false);
-  }
-};
-   
-  
-
-  // Chat Handler
-  const sendMessage = () => {
-    if (!chatInput.trim()) return;
-
-    const newHistory = [...chatHistory, { role: 'user', content: chatInput }];
-    setChatHistory(newHistory);
-    setChatInput('');
-
-    // Simulate AI response
-    setTimeout(() => {
-      const responses = [
-        `Based on your reports, your ${chatInput.toLowerCase()} is being analyzed. Please ensure you're following the recommended lifestyle changes.`,
-        `That's a great question about your health! The key thing to remember is that small consistent changes lead to big improvements over time.`,
-        `Your recent results show ${analysisResults?.alerts?.[0]?.title || 'some areas'} that need attention. I'd recommend discussing this with your doctor.`,
-        `Keep in mind that these are preliminary insights. Always consult with a healthcare professional for medical decisions.`
-      ];
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-      setChatHistory([...newHistory, { role: 'assistant', content: randomResponse }]);
-    }, 500);
+      if (token) {
+        fetchSavedReports(token);
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Server error while analyzing report");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const removeReport = (id) => {
-    setReports(reports.filter(r => r.id !== id));
+  // Real-Time Production AI Chat Handler
+  const sendMessage = async (presetMessage = null) => {
+    const textToSend = presetMessage || chatInput;
+    if (!textToSend.trim() || chatLoading) return;
+
+    const updatedHistory = [...chatHistory, { role: 'user', content: textToSend }];
+    setChatHistory(updatedHistory);
+    if (!presetMessage) setChatInput('');
+    setChatLoading(true);
+
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_BASE}/api/chat`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          messages: updatedHistory,
+          reportContext: analysisResults
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.message) {
+        setChatHistory([...updatedHistory, data.message]);
+      } else {
+        setChatHistory([...updatedHistory, {
+          role: 'assistant',
+          content: '⚠️ ' + (data.error || 'Failed to receive AI response. Please try again.')
+        }]);
+      }
+    } catch (err) {
+      setChatHistory([...updatedHistory, {
+        role: 'assistant',
+        content: '⚠️ Network error connecting to MedIntel AI Chat service.'
+      }]);
+    } finally {
+      setChatLoading(false);
+    }
   };
 
-  // UI Components
-  const StatusBadge = ({ status }) => {
-    const config = {
-      normal: { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-400', label: '✓ Normal' },
-      low: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-400', label: '↓ Low' },
-      borderline: { bg: 'bg-amber-100 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-400', label: '⚠ Borderline' },
-      high: { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-400', label: '↑ High' },
-      critical: { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400', label: '✕ Critical' }
-    };
-    const c = config[status] || config.normal;
-    return <span className={`px-3 py-1 rounded-full text-sm font-semibold ${c.bg} ${c.text}`}>{c.label}</span>;
+  // Copy Message Content
+  const copyToClipboard = (text, index) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
   };
 
+  // Health Score Circular SVG Component
   const HealthScoreCircle = ({ score }) => {
     const circumference = 2 * Math.PI * 45;
-    const progress = (score / 100) * circumference;
-    const color = score > 75 ? '#10b981' : score > 50 ? '#f59e0b' : '#ef4444';
+    const strokeDashoffset = circumference - (score / 100) * circumference;
+    const getColor = (s) => {
+      if (s >= 80) return '#10b981'; // Green
+      if (s >= 60) return '#f59e0b'; // Amber
+      return '#ef4444'; // Red
+    };
 
     return (
-      <div className="flex flex-col items-center">
-        <div className="relative w-40 h-40">
-          <svg className="absolute inset-0 transform -rotate-90 w-full h-full" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r="45" stroke="currentColor" strokeWidth="3" fill="none" className="text-gray-300 dark:text-gray-600" />
-            <motion.circle
-              cx="50" cy="50" r="45" stroke={color} strokeWidth="3" fill="none"
-              strokeDasharray={circumference} strokeDashoffset={circumference}
-              animate={{ strokeDashoffset: circumference - progress }}
-              transition={{ duration: 1.5 }}
-              strokeLinecap="round"
-            />
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center">
-              <motion.div className="text-5xl font-bold" style={{ color }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
-                {score}
-              </motion.div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Health Score</div>
-            </div>
-          </div>
+      <div className="relative w-36 h-36 flex items-center justify-center">
+        <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r="45" stroke={darkMode ? "#1e293b" : "#e2e8f0"} strokeWidth="10" fill="transparent" />
+          <circle
+            cx="50" cy="50" r="45"
+            stroke={getColor(score)}
+            strokeWidth="10"
+            fill="transparent"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            className="transition-all duration-1000 ease-out"
+          />
+        </svg>
+        <div className="absolute flex flex-col items-center justify-center text-center">
+          <span className="text-4xl font-extrabold tracking-tight">{score}</span>
+          <span className={`text-xs font-semibold ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>/100</span>
         </div>
-        <p className="mt-4 text-sm font-medium text-gray-700 dark:text-gray-300">
-          {score > 75 ? '✓ Excellent' : score > 50 ? '⚠ Moderate' : '✕ Needs Attention'}
-        </p>
       </div>
     );
   };
 
-  // ==================== PAGES ====================
-
-  // LOGIN/REGISTER PAGE
-  if (!isAuthenticated) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${darkMode ? 'bg-gradient-to-br from-slate-950 to-slate-900' : 'bg-gradient-to-br from-blue-50 to-cyan-50'}`}>
-        <div className="absolute top-4 right-4">
-          <button onClick={() => setDarkMode(!darkMode)} className={`p-2 rounded-lg ${darkMode ? 'bg-slate-800' : 'bg-white'} shadow-lg`}>
-            {darkMode ? '☀️' : '🌙'}
-          </button>
-        </div>
-
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className={`w-full max-w-md p-8 rounded-2xl shadow-xl ${darkMode ? 'bg-slate-900' : 'bg-white'} border ${darkMode ? 'border-slate-800' : 'border-gray-200'}`}>
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-              <Heart className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600">
-              MedIntel AI
-            </h1>
-            <p className={`mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              AI-Powered Medical Report Analysis
-            </p>
-          </div>
-
-          <div className="space-y-6">
-            {authMode === 'login' ? (
-              <>
-                <div>
-                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Email</label>
-                  <input type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="your@email.com" className={`w-full px-4 py-3 rounded-lg border outline-none transition ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-300 text-gray-900'}`} />
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Password</label>
-                  <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••" className={`w-full px-4 py-3 rounded-lg border outline-none transition ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-300 text-gray-900'}`} />
-                </div>
-                <button onClick={handleLogin} className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-semibold py-3 rounded-lg hover:shadow-lg transition">
-                  Log In
-                </button>
-              </>
-            ) : (
-              <>
-                <div>
-                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Full Name</label>
-                  <input type="text" value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="John Doe" className={`w-full px-4 py-3 rounded-lg border outline-none transition ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-300 text-gray-900'}`} />
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Email</label>
-                  <input type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="your@email.com" className={`w-full px-4 py-3 rounded-lg border outline-none transition ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-300 text-gray-900'}`} />
-                </div>
-                <div>
-                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Password</label>
-                  <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••" className={`w-full px-4 py-3 rounded-lg border outline-none transition ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-gray-50 border-gray-300 text-gray-900'}`} />
-                </div>
-                <button onClick={handleRegister} className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-semibold py-3 rounded-lg hover:shadow-lg transition">
-                  Create Account
-                </button>
-              </>
-            )}
-
-            <p className={`text-center text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              {authMode === 'login' ? (
-                <>Don't have an account? <button onClick={() => setAuthMode('register')} className="text-blue-500 font-medium hover:text-blue-600">Sign up</button></>
-              ) : (
-                <>Already have an account? <button onClick={() => setAuthMode('login')} className="text-blue-500 font-medium hover:text-blue-600">Log in</button></>
-              )}
-            </p>
-          </div>
-
-          <div className={`mt-6 p-4 rounded-lg ${darkMode ? 'bg-slate-800' : 'bg-blue-50'} border ${darkMode ? 'border-slate-700' : 'border-blue-200'}`}>
-            <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-              <strong>Demo credentials:</strong> Any email + password works for testing.
-            </p>
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
-
-  // MAIN APP LAYOUT
   return (
-    <div className={`min-h-screen flex flex-col transition-colors ${darkMode ? 'bg-slate-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
-      {/* Header */}
-      <header className={`sticky top-0 z-40 border-b backdrop-blur-md ${darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white/80 border-gray-200'}`}>
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className={`p-2 rounded-lg lg:hidden ${darkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`}>
-              {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-                <Heart className="w-6 h-6 text-white" />
+    <div className={`min-h-screen font-sans transition-colors duration-300 ${darkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+
+      {/* Ambient Radial Glass Background Accents */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-cyan-500/15 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 -right-40 w-96 h-96 bg-indigo-500/15 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
+      </div>
+
+      {/* STICKY GLASS NAVIGATION BAR */}
+      <header className={`sticky top-0 z-40 transition-all duration-300 backdrop-blur-xl border-b ${darkMode ? 'bg-slate-950/70 border-white/10' : 'bg-white/70 border-slate-200'}`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+          
+          {/* Logo */}
+          <div
+            onClick={() => setCurrentPage('home')}
+            className="flex items-center gap-3 cursor-pointer group"
+          >
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-600 p-0.5 shadow-lg shadow-cyan-500/25 group-hover:scale-105 transition-transform">
+              <div className={`w-full h-full rounded-[10px] flex items-center justify-center ${darkMode ? 'bg-slate-950' : 'bg-white'}`}>
+                <Heart className="w-6 h-6 text-cyan-400 fill-cyan-400/20" />
               </div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent">
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-400 bg-clip-text text-transparent">
                 MedIntel AI
               </h1>
+              <p className="text-[10px] font-medium tracking-widest text-cyan-400/80 uppercase">Clinical Intelligence</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <button onClick={() => setDarkMode(!darkMode)} className={`p-2 rounded-lg ${darkMode ? 'bg-slate-800' : 'bg-gray-100'}`}>
-              {darkMode ? '☀️' : '🌙'}
+          {/* Desktop Navigation Links */}
+          <nav className="hidden md:flex items-center gap-1 bg-slate-900/40 p-1.5 rounded-full border border-white/10">
+            {[
+              { id: 'home', label: 'Home', icon: Home },
+              { id: 'upload', label: 'Analyze Report', icon: Upload },
+              { id: 'analysis', label: 'Results', icon: BarChart3, disabled: !analysisResults },
+              { id: 'chat', label: 'AI Chat', icon: Brain },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                disabled={tab.disabled}
+                onClick={() => setCurrentPage(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                  currentPage === tab.id
+                    ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-md shadow-cyan-500/20'
+                    : tab.disabled
+                    ? 'opacity-40 cursor-not-allowed text-slate-500'
+                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <tab.icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+
+          {/* Right Action Icons & Auth Controls */}
+          <div className="flex items-center gap-3">
+            
+            {/* Theme Toggle */}
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className={`p-2.5 rounded-xl border transition-all ${darkMode ? 'bg-slate-900/80 border-slate-800 text-amber-400 hover:bg-slate-800' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'}`}
+              title="Toggle theme"
+            >
+              {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
-            <button onClick={() => { setIsAuthenticated(false); setCurrentPage('home'); }} className={`p-2 rounded-lg ${darkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`}>
-              <LogOut className="w-5 h-5" />
+
+            {/* Auth Dropdown or Login Button */}
+            {user ? (
+              <div className="relative">
+                <button
+                  onClick={() => setUserDropdownOpen(!userDropdownOpen)}
+                  className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border transition-all ${darkMode ? 'bg-slate-900/80 border-slate-800 text-white hover:bg-slate-800' : 'bg-slate-100 border-slate-200 text-slate-900 hover:bg-slate-200'}`}
+                >
+                  <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-500 flex items-center justify-center font-bold text-xs text-white">
+                    {user.full_name?.charAt(0).toUpperCase() || 'U'}
+                  </div>
+                  <span className="text-sm font-semibold max-w-[100px] truncate">{user.full_name}</span>
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                </button>
+
+                {/* User Dropdown Menu */}
+                {userDropdownOpen && (
+                  <div className={`absolute right-0 mt-2 w-56 rounded-2xl border p-2 shadow-2xl z-50 backdrop-blur-2xl ${darkMode ? 'bg-slate-900/95 border-slate-800 text-white' : 'bg-white/95 border-slate-200 text-slate-900'}`}>
+                    <div className="px-3 py-2 border-b border-white/10 mb-1">
+                      <p className="text-xs font-semibold text-cyan-400">{user.full_name}</p>
+                      <p className="text-xs text-slate-400 truncate">{user.email}</p>
+                    </div>
+                    <button
+                      onClick={() => { setCurrentPage('reports'); setUserDropdownOpen(false); }}
+                      className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl hover:bg-cyan-500/10 hover:text-cyan-400 transition"
+                    >
+                      <FileText className="w-4 h-4" /> Saved Medical Reports ({savedUserReports.length})
+                    </button>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full text-left flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl text-rose-400 hover:bg-rose-500/10 transition mt-1"
+                    >
+                      <LogOut className="w-4 h-4" /> Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={() => { setAuthMode('login'); setAuthModalOpen(true); }}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-sm font-semibold shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all"
+              >
+                <User className="w-4 h-4" /> Sign In
+              </button>
+            )}
+
+            {/* Mobile Hamburger Button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2.5 rounded-xl border border-white/10 text-slate-300"
+            >
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
           </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        {sidebarOpen && (
-          <aside className={`w-64 border-r ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'} p-6 overflow-y-auto hidden lg:block`}>
-            <nav className="space-y-2">
-              {[
-                { id: 'dashboard', label: 'Dashboard', icon: Home },
-                { id: 'upload', label: 'Upload Reports', icon: Upload },
-                { id: 'analysis', label: 'Analysis', icon: BarChart3, disabled: !analysisResults },
-                { id: 'chat', label: 'AI Chat', icon: Brain, disabled: !analysisResults }
-              ].map(item => (
-                <button
-                  key={item.id}
-                  onClick={() => setCurrentPage(item.id)}
-                  disabled={item.disabled}
-                  className={`w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 transition ${
-                    currentPage === item.id
-                      ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                      : `${darkMode ? 'text-gray-300 hover:bg-slate-800' : 'text-gray-700 hover:bg-gray-100'} ${item.disabled ? 'opacity-50 cursor-not-allowed' : ''}`
-                  }`}
-                >
-                  <item.icon className="w-5 h-5" />
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-            {analysisResults && (
-              <div className={`mt-8 p-4 rounded-lg border ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-blue-50 border-blue-200'}`}>
-                <p className={`text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Last Analysis</p>
-                <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  {analysisResults.patientInfo.testDate}
+      {/* MOBILE DRAWER */}
+      {mobileMenuOpen && (
+        <div className={`md:hidden border-b p-4 backdrop-blur-xl z-30 ${darkMode ? 'bg-slate-950/90 border-slate-800' : 'bg-white/90 border-slate-200'}`}>
+          <div className="flex flex-col gap-2">
+            {[
+              { id: 'home', label: 'Home', icon: Home },
+              { id: 'upload', label: 'Analyze Report', icon: Upload },
+              { id: 'analysis', label: 'Results', icon: BarChart3, disabled: !analysisResults },
+              { id: 'chat', label: 'AI Chat', icon: Brain },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                disabled={tab.disabled}
+                onClick={() => { setCurrentPage(tab.id); setMobileMenuOpen(false); }}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium ${
+                  currentPage === tab.id
+                    ? 'bg-cyan-500/20 text-cyan-400 font-bold'
+                    : tab.disabled
+                    ? 'opacity-40 text-slate-500'
+                    : 'text-slate-300'
+                }`}
+              >
+                <tab.icon className="w-5 h-5" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* MAIN CONTENT AREA */}
+      <main className="relative z-10">
+        <AnimatePresence mode="wait">
+
+          {/* HOME PAGE */}
+          {currentPage === 'home' && (
+            <motion.div
+              key="home"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-24"
+            >
+              <div className="text-center max-w-3xl mx-auto">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 text-xs font-bold tracking-wide mb-8">
+                  <Sparkles className="w-4 h-4" /> Advanced Gemini 2.5 Flash & Groq Clinical Intelligence
+                </div>
+
+                <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight leading-tight mb-6">
+                  Decode Your Medical Reports with{' '}
+                  <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                    AI Precision
+                  </span>
+                </h1>
+
+                <p className={`text-lg sm:text-xl mb-10 leading-relaxed ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                  Upload lab reports, prescriptions, or doctor notes. Get instant biomarker explanations, health scores, diet & lifestyle advice, and interactive AI consultation.
+                </p>
+
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                  <button
+                    onClick={() => setCurrentPage('upload')}
+                    className="w-full sm:w-auto px-8 py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white font-bold text-lg shadow-xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+                  >
+                    <Upload className="w-5 h-5" /> Upload Medical Report
+                  </button>
+
+                  <button
+                    onClick={() => setCurrentPage('chat')}
+                    className={`w-full sm:w-auto px-8 py-4 rounded-2xl border font-bold text-lg transition-all flex items-center justify-center gap-3 ${darkMode ? 'bg-slate-900/80 border-slate-800 text-white hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-100'}`}
+                  >
+                    <Brain className="w-5 h-5 text-cyan-400" /> Consult AI Assistant
+                  </button>
+                </div>
+
+                {/* KPI Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16 text-left">
+                  {[
+                    { title: 'Multi-Modal OCR', desc: 'Analyzes printed text, handwriting, low-light scans, and PDF documents.', icon: FileText, color: 'text-cyan-400' },
+                    { title: 'Biomarker Intelligence', desc: 'Automatically flags low, high, and critical lab values with reference ranges.', icon: Activity, color: 'text-emerald-400' },
+                    { title: 'Clinical Context AI Chat', desc: 'Ask specific questions about your reports, medicines, and nutrition.', icon: Brain, color: 'text-indigo-400' },
+                  ].map((feat, i) => (
+                    <div
+                      key={i}
+                      className={`p-6 rounded-2xl border backdrop-blur-xl ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}
+                    >
+                      <feat.icon className={`w-8 h-8 ${feat.color} mb-4`} />
+                      <h3 className="text-lg font-bold mb-2">{feat.title}</h3>
+                      <p className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{feat.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* UPLOAD PAGE */}
+          {currentPage === 'upload' && (
+            <motion.div
+              key="upload"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12"
+            >
+              <div className="text-center mb-10">
+                <h2 className="text-3xl sm:text-4xl font-extrabold mb-3">Upload Medical Report</h2>
+                <p className={darkMode ? 'text-slate-400' : 'text-slate-600'}>
+                  Supports PDF, JPG, PNG, WebP — blood tests, radiology reports, prescriptions & doctor handwriting notes
                 </p>
               </div>
-            )}
-          </aside>
-        )}
 
-        {/* Main Content */}
-        <main className="flex-1 overflow-y-auto">
-          <AnimatePresence mode="wait">
-            {/* DASHBOARD PAGE */}
-            {currentPage === 'dashboard' && (
-              <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 lg:p-8 max-w-7xl mx-auto w-full">
-                <div className="mb-8">
-                  <h2 className="text-4xl font-bold mb-2">Welcome, {userName}!</h2>
-                  <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Your health dashboard and medical report center</p>
-                </div>
+              {/* Glass Dropzone Card */}
+              <div className={`p-8 sm:p-12 rounded-3xl border-2 border-dashed transition-all text-center relative ${darkMode ? 'glass-card-dark border-cyan-500/30 hover:border-cyan-400' : 'glass-card-light border-cyan-400/40 hover:border-cyan-500'}`}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className={`p-6 rounded-xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold">Reports</h3>
-                      <FileText className="w-5 h-5 text-blue-500" />
-                    </div>
-                    <p className="text-3xl font-bold">{reports.length}</p>
-                    <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Uploaded</p>
-                  </motion.div>
-
-                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className={`p-6 rounded-xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold">Status</h3>
-                      <CheckCircle className="w-5 h-5 text-emerald-500" />
-                    </div>
-                    <p className="text-3xl font-bold">{analysisResults ? '1' : '0'}</p>
-                    <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Analyzed</p>
-                  </motion.div>
-
-                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className={`p-6 rounded-xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold">Health Score</h3>
-                      <Heart className="w-5 h-5 text-red-500" />
-                    </div>
-                    <p className="text-3xl font-bold">{analysisResults?.healthScore || '—'}</p>
-                    <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{analysisResults?.riskLevel || 'No data'}</p>
-                  </motion.div>
-
-                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className={`p-6 rounded-xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold">Last Update</h3>
-                      <Calendar className="w-5 h-5 text-purple-500" />
-                    </div>
-                    <p className="text-lg font-bold">{analysisResults?.patientInfo.testDate || 'Pending'}</p>
-                    <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Test date</p>
-                  </motion.div>
-                </div>
-
-                {analysisResults && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className={`p-6 rounded-xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                      
-                      <ResponsiveContainer width="100%" height={250}>
-                        <LineChart data={analysisResults.trendData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#475569' : '#e5e7eb'} />
-                          <XAxis dataKey="date" stroke={darkMode ? '#9ca3af' : '#6b7280'} />
-                          <YAxis stroke={darkMode ? '#9ca3af' : '#6b7280'} />
-                          <Tooltip contentStyle={{ backgroundColor: darkMode ? '#1e293b' : '#fff', border: 'none', borderRadius: '8px' }} />
-                          <Legend />
-                          <Line type="monotone" dataKey="hemoglobin" stroke="#3b82f6" strokeWidth={2} />
-                          <Line type="monotone" dataKey="glucose" stroke="#f59e0b" strokeWidth={2} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </motion.div>
-
-                    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className={`p-6 rounded-xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                      <h3 className="font-bold text-lg mb-4">Score Progress</h3>
-                      <ResponsiveContainer width="100%" height={250}>
-                        <AreaChart data={analysisResults.healthScoreTrend}>
-                          <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#475569' : '#e5e7eb'} />
-                          <XAxis dataKey="month" stroke={darkMode ? '#9ca3af' : '#6b7280'} />
-                          <YAxis stroke={darkMode ? '#9ca3af' : '#6b7280'} />
-                          <Tooltip contentStyle={{ backgroundColor: darkMode ? '#1e293b' : '#fff', border: 'none', borderRadius: '8px' }} />
-                          <Area type="monotone" dataKey="score" stroke="#06b6d4" fill="#06b6d420" />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </motion.div>
-                  </div>
-                )}
-
-                {!analysisResults && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={`text-center p-12 rounded-xl border-2 border-dashed ${darkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-300 bg-gray-50'}`}>
-                    <Brain className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                    <h3 className="text-xl font-semibold mb-2">No Analysis Yet</h3>
-                    <p className={`mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Upload and analyze reports to see your health insights</p>
-                    <button onClick={() => setCurrentPage('upload')} className="inline-flex items-center gap-2 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
-                      <Upload className="w-4 h-4" /> Get Started
-                    </button>
-                  </motion.div>
-                )}
-              </motion.div>
-            )}
-
-            {/* UPLOAD PAGE */}
-            {currentPage === 'upload' && (
-              <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 lg:p-8 max-w-4xl mx-auto w-full">
-                <div className="mb-8">
-                  <h2 className="text-4xl font-bold mb-2">Upload Medical Reports</h2>
-                  <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>PDF, images, scans - any medical document</p>
-                </div>
-
-                <div onClick={() => fileInputRef.current?.click()} className={`border-2 border-dashed rounded-2xl p-16 text-center cursor-pointer transition mb-8 ${darkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-blue-300 hover:bg-blue-50'}`}>
-                  <Upload className="w-20 h-20 mx-auto mb-4 text-blue-500 opacity-50" />
-                  <h3 className="text-2xl font-bold mb-2">Drag files or click to browse</h3>
-                  <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>PDF, JPG, PNG • Up to 10MB each</p>
-                  <input ref={fileInputRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png" onChange={handleFileUpload} className="hidden" />
-                </div>
-
-                {reports.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-bold mb-4">Uploaded Files ({reports.length})</h3>
-                    <div className="space-y-3 mb-8">
-                      {reports.map(report => (
-                        <motion.div key={report.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex items-center justify-between p-4 rounded-lg border ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}`}>
-                          <div className="flex items-center gap-4 flex-1">
-                            <Upload className="w-5 h-5 text-blue-500" />
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium truncate">{report.name}</p>
-                              <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{(report.size / 1024).toFixed(1)} KB</p>
-                            </div>
-                          </div>
-                          <button onClick={() => removeReport(report.id)} className={`p-2 rounded ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-gray-100'}`}>
-                            <Trash2 className="w-5 h-5 text-red-500" />
-                          </button>
-                        </motion.div>
-                      ))}
+                {reports.length === 0 ? (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="cursor-pointer py-6 group"
+                  >
+                    <div className="w-20 h-20 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
+                      <Upload className="w-10 h-10 text-cyan-400 animate-bounce" />
                     </div>
 
-                    <button onClick={handleAnalyze} disabled={loading} className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold py-4 rounded-lg hover:shadow-lg disabled:opacity-50 transition flex items-center justify-center gap-2">
-                      {loading ? (
-                        <>
-                          <div className="animate-spin">⟳</div> Analyzing...
-                        </>
-                      ) : (
-                        <>
-                          <Zap className="w-5 h-5" /> Analyze with AI
-                        </>
-                      )}
+                    <h3 className="text-xl font-bold mb-2">Click to select or drag & drop your report</h3>
+                    <p className="text-xs text-slate-400 mb-6">Supports PDF, PNG, JPG, WebP (Up to 10MB)</p>
+
+                    <button
+                      type="button"
+                      className="px-6 py-3 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 text-sm font-semibold hover:bg-cyan-500/30 transition"
+                    >
+                      Browse Files
                     </button>
                   </div>
-                )}
-              </motion.div>
-            )}
-
-            {/* ANALYSIS PAGE */}
-            {currentPage === 'analysis' && analysisResults && (
-              <motion.div key="analysis" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 lg:p-8 max-w-6xl mx-auto w-full">
-                <div className="mb-8">
-                  <h2 className="text-4xl font-bold mb-2">Your Health Analysis</h2>
-                  <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>AI-powered insights and recommendations</p>
-                </div>
-
-                {/* Health Score */}
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className={`p-8 rounded-2xl border mb-8 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                  <h3 className="text-2xl font-bold mb-8">Overall Health Score</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="flex justify-center">
-                      <HealthScoreCircle score={analysisResults.healthScore} />
-                    </div>
-                    <div className="space-y-6">
-                      <div>
-                        <h4 className="font-bold mb-2 text-lg">Summary</h4>
-                        <p className={darkMode ? 'text-gray-300' : 'text-gray-700'}>{analysisResults.summaryPatientFriendly}</p>
+                ) : (
+                  <div className="space-y-6">
+                    <div className={`max-w-md mx-auto p-4 rounded-2xl border flex items-center justify-between text-left ${darkMode ? 'bg-slate-900/90 border-cyan-500/40' : 'bg-white border-cyan-300'}`}>
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-8 h-8 text-cyan-400 shrink-0" />
+                        <div className="overflow-hidden">
+                          <p className="text-sm font-bold truncate max-w-[200px]">{reports[0].name}</p>
+                          <p className="text-xs text-slate-400">{reports[0].size}</p>
+                        </div>
                       </div>
-                      {analysisResults.alerts?.length > 0 && (
-                        <div className={`p-4 rounded-lg border ${darkMode ? 'bg-amber-900/20 border-amber-800' : 'bg-amber-50 border-amber-200'}`}>
-                          <h5 className={`font-bold mb-3 flex items-center gap-2 ${darkMode ? 'text-amber-400' : 'text-amber-700'}`}>
-                            <AlertCircle className="w-5 h-5" /> Key Alerts
-                          </h5>
-                          <ul className="space-y-2">
-                            {analysisResults.alerts.map((alert, i) => (
-                              <li key={i} className={`text-sm ${darkMode ? 'text-amber-300' : 'text-amber-800'}`}>
-                                • <strong>{alert.title}</strong> ({alert.value})
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+
+                      <div className="flex items-center gap-2">
+                        {reports[0].file && (
+                          <a
+                            href={URL.createObjectURL(reports[0].file)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-2 rounded-xl text-cyan-400 hover:bg-cyan-500/10 transition"
+                            title="Open / View Document"
+                          >
+                            <Eye className="w-5 h-5" />
+                          </a>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => setReports([])}
+                          className="p-2 rounded-xl text-rose-400 hover:bg-rose-500/10 transition"
+                          title="Remove File"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-3 max-w-md mx-auto">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`w-full sm:w-auto px-5 py-3.5 rounded-2xl border text-sm font-semibold transition ${darkMode ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'}`}
+                      >
+                        Change File
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={handleAnalyze}
+                        className={`w-full flex-1 py-3.5 px-6 rounded-2xl font-bold text-base shadow-xl transition-all flex items-center justify-center gap-2 ${
+                          loading
+                            ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-500'
+                            : 'bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:scale-[1.02] active:scale-[0.98]'
+                        }`}
+                      >
+                        {loading ? (
+                          <>
+                            <RefreshCw className="w-5 h-5 animate-spin text-cyan-300" />
+                            <span>Analyzing Document with Gemini AI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-5 h-5" />
+                            <span>Analyze Report Now</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
-                </motion.div>
+                )}
+              </div>
+            </motion.div>
+          )}
 
-                {/* Biomarkers */}
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className={`p-8 rounded-2xl border mb-8 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                  <h3 className="text-2xl font-bold mb-6">Detailed Biomarkers</h3>
-                  <div className="space-y-4">
-                    {analysisResults.biomarkers.map((bm, i) => (
-                      <motion.div key={i} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }} className={`p-5 rounded-lg border ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-gray-50 border-gray-200'}`}>
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <h4 className="font-bold text-lg">{bm.name}</h4>
-                            <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Normal: {bm.normalRange}</p>
-                          </div>
-                          <StatusBadge status={bm.status} />
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 mb-3">
-                          <div>
-                            <div className="text-3xl font-bold text-blue-600">{bm.value}</div>
-                            <div className="text-xs text-gray-500">{bm.unit}</div>
-                          </div>
-                          <div className="col-span-2 text-sm">{bm.significance}</div>
-                        </div>
-                        <div className={`p-3 rounded text-sm ${darkMode ? 'bg-blue-900/20 text-blue-300' : 'bg-blue-50 text-blue-900'}`}>
-                          💡 {bm.recommendation}
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                </motion.div>
-
-                {/* Recommendations Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className={`p-6 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                    <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
-                      <Zap className="w-5 h-5 text-amber-500" /> Lifestyle
-                    </h4>
-                    <ul className="space-y-3">
-                      {analysisResults.recommendations.lifestyle.map((item, i) => (
-                        <li key={i} className={`flex gap-2 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                          <span className="text-amber-500">✓</span> {item}
-                        </li>
-                      ))}
-                    </ul>
-                  </motion.div>
-
-                  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className={`p-6 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                    <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
-                      <Heart className="w-5 h-5 text-red-500" /> Nutrition
-                    </h4>
-                    <ul className="space-y-3">
-                      {analysisResults.recommendations.nutrition.map((item, i) => (
-                        <li key={i} className={`flex gap-2 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                          <span className="text-red-500">•</span> {item}
-                        </li>
-                      ))}
-                    </ul>
-                  </motion.div>
+          {/* ANALYSIS RESULTS PAGE */}
+          {currentPage === 'analysis' && analysisResults && (
+            <motion.div
+              key="analysis"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12"
+            >
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
+                <div>
+                  <h2 className="text-3xl font-extrabold mb-1">Medical Report Insights</h2>
+                  <p className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                    Analyzed on {analysisResults.patientInfo.testDate}
+                  </p>
                 </div>
 
-                {/* Doctor Questions */}
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className={`p-6 rounded-2xl border mb-8 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                  <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
-                    <Brain className="w-5 h-5 text-purple-500" /> Questions for Your Doctor
-                  </h4>
-                  <ul className="space-y-3">
-                    {analysisResults.doctorQuestions.map((q, i) => (
-                      <li key={i} className={`flex gap-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                        <span className="text-purple-500 font-bold">{i + 1}.</span> {q}
+                <button
+                  onClick={() => setCurrentPage('chat')}
+                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:scale-105 transition flex items-center gap-2"
+                >
+                  <Brain className="w-4 h-4" /> Consult AI Assistant About This Report
+                </button>
+              </div>
+
+              {/* Health Score & Overview Glass Card */}
+              <div className={`p-8 rounded-3xl border mb-8 ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
+                  
+                  {/* Gauge */}
+                  <div className="flex flex-col items-center justify-center text-center border-b md:border-b-0 md:border-r border-white/10 pb-6 md:pb-0">
+                    <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Overall Health Score</h3>
+                    <HealthScoreCircle score={analysisResults.healthScore} />
+                    <span className="mt-4 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                      {analysisResults.riskLevel} Risk Profile
+                    </span>
+                  </div>
+
+                  {/* Summary & Alerts */}
+                  <div className="md:col-span-2 space-y-4">
+                    <div>
+                      <h4 className="text-lg font-bold text-cyan-400 mb-2">Patient Summary</h4>
+                      <p className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                        {analysisResults.summaryPatientFriendly}
+                      </p>
+                    </div>
+
+                    {/* Alerts */}
+                    {analysisResults.alerts?.length > 0 && (
+                      <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-amber-950/30 border-amber-800/50' : 'bg-amber-50 border-amber-200'}`}>
+                        <h5 className="text-xs font-bold text-amber-400 flex items-center gap-2 mb-2 uppercase tracking-wide">
+                          <AlertCircle className="w-4 h-4" /> Abnormal Biomarkers Detected ({analysisResults.alerts.length})
+                        </h5>
+                        <div className="flex flex-wrap gap-2">
+                          {analysisResults.alerts.map((a, i) => (
+                            <span key={i} className="px-3 py-1 rounded-xl text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              {a.title}: {a.value}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* OCR Assessment */}
+                    {analysisResults.imageQualityNotes && (
+                      <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-indigo-950/30 border-indigo-800/50' : 'bg-indigo-50 border-indigo-200'}`}>
+                        <h5 className="text-xs font-bold text-indigo-400 flex items-center gap-2 mb-1 uppercase tracking-wide">
+                          <FileText className="w-4 h-4" /> Document & Handwriting Assessment
+                        </h5>
+                        <p className={`text-xs ${darkMode ? 'text-indigo-300' : 'text-indigo-800'}`}>
+                          {analysisResults.imageQualityNotes}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Biomarkers Table Grid */}
+              <div className={`p-8 rounded-3xl border mb-8 ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+                  <Activity className="w-6 h-6 text-cyan-400" /> Extracted Biomarkers & Lab Results
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {analysisResults.biomarkers.map((bm, i) => (
+                    <div
+                      key={i}
+                      className={`p-4 rounded-2xl border transition-all ${
+                        bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
+                          ? darkMode ? 'bg-amber-950/20 border-amber-500/30' : 'bg-amber-50 border-amber-200'
+                          : darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-bold text-sm">{bm.name}</span>
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
+                          bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
+                            ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                            : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        }`}>
+                          {bm.status}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-2 mb-2">
+                        <span className="text-2xl font-black text-cyan-400">{bm.value}</span>
+                        <span className="text-xs text-slate-400">{bm.unit}</span>
+                        <span className="text-xs text-slate-500 ml-auto">Range: {bm.normalRange}</span>
+                      </div>
+                      {bm.significance && (
+                        <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                          {bm.significance}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Lifestyle & Diet Recommendations */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-cyan-400">
+                    <Heart className="w-5 h-5" /> Diet & Nutrition Advice
+                  </h3>
+                  <ul className="space-y-2">
+                    {analysisResults.recommendations.nutrition.map((item, i) => (
+                      <li key={i} className="text-sm flex items-start gap-2">
+                        <span className="text-cyan-400 font-bold">•</span>
+                        <span>{item}</span>
                       </li>
                     ))}
                   </ul>
-                </motion.div>
+                </div>
 
-                {/* Follow-up Tests */}
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className={`p-6 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                  <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-cyan-500" /> Follow-up Tests
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {analysisResults.recommendations.followUpTests.map((test, i) => (
-                      <div key={i} className={`p-3 rounded-lg text-sm ${darkMode ? 'bg-cyan-900/20 text-cyan-300' : 'bg-cyan-50 text-cyan-700'} border ${darkMode ? 'border-cyan-800' : 'border-cyan-200'}`}>
-                        📋 {test}
-                      </div>
+                <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-emerald-400">
+                    <Activity className="w-5 h-5" /> Questions for Your Doctor
+                  </h3>
+                  <ul className="space-y-2">
+                    {analysisResults.doctorQuestions.map((q, i) => (
+                      <li key={i} className="text-sm flex items-start gap-2">
+                        <span className="text-emerald-400 font-bold">•</span>
+                        <span>{q}</span>
+                      </li>
                     ))}
+                  </ul>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* PRODUCTION REAL-TIME AI CHAT PAGE */}
+          {currentPage === 'chat' && (
+            <motion.div
+              key="chat"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 h-[calc(100vh-100px)] flex flex-col"
+            >
+              {/* Chat Header Glass Card */}
+              <div className={`p-4 rounded-2xl border mb-4 flex items-center justify-between ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
+                    <Brain className="w-6 h-6" />
                   </div>
-                </motion.div>
-              </motion.div>
-            )}
-
-            {/* CHAT PAGE */}
-            {currentPage === 'chat' && analysisResults && (
-              <motion.div key="chat" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-4 lg:p-8 h-[calc(100vh-120px)] flex flex-col max-w-2xl mx-auto w-full">
-                <div className="mb-6">
-                  <h2 className="text-4xl font-bold mb-2">Medical AI Assistant</h2>
-                  <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Ask questions about your health and reports</p>
+                  <div>
+                    <h3 className="font-bold text-sm">MedIntel Clinical AI Assistant</h3>
+                    <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      {analysisResults ? 'Active Context: Patient Report Loaded' : 'General Health AI Guidance'}
+                    </p>
+                  </div>
                 </div>
 
-                <div className={`flex-1 overflow-y-auto mb-6 rounded-xl border p-6 space-y-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'}`}>
-                  {chatHistory.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-center">
-                      <div>
-                        <Brain className="w-20 h-20 mx-auto mb-4 opacity-20" />
-                        <p className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Start asking questions about your medical analysis...</p>
+                {chatHistory.length > 1 && (
+                  <button
+                    onClick={() => setChatHistory([chatHistory[0]])}
+                    className="p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition text-xs flex items-center gap-1.5"
+                    title="Clear chat"
+                  >
+                    <Trash2 className="w-4 h-4" /> Clear Chat
+                  </button>
+                )}
+              </div>
+
+              {/* Quick Action Prompt Chips */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-2 scrollbar-none">
+                {[
+                  "Explain my abnormal lab values",
+                  "What diet changes should I make?",
+                  "What questions should I ask my doctor?",
+                  "Is my health score concerning?"
+                ].map((chip, i) => (
+                  <button
+                    key={i}
+                    onClick={() => sendMessage(chip)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border transition-all ${darkMode ? 'bg-slate-900/80 border-slate-800 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-500/40' : 'bg-white border-slate-200 text-cyan-700 hover:bg-cyan-50'}`}
+                  >
+                    💡 {chip}
+                  </button>
+                ))}
+              </div>
+
+              {/* Messages Container */}
+              <div className={`flex-1 overflow-y-auto p-4 rounded-3xl border mb-4 space-y-4 ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                {chatHistory.map((msg, index) => (
+                  <div
+                    key={index}
+                    className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    {msg.role === 'assistant' && (
+                      <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white shrink-0 mt-1">
+                        <Brain className="w-4 h-4" />
                       </div>
-                    </div>
-                  ) : (
-                    chatHistory.map((msg, i) => (
-                      <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-xs lg:max-w-md px-4 py-3 rounded-lg ${msg.role === 'user' ? 'bg-blue-500 text-white' : darkMode ? 'bg-slate-800 text-gray-200' : 'bg-gray-100 text-gray-900'}`}>
-                          <p className="text-sm">{msg.content}</p>
-                        </div>
-                      </motion.div>
-                    ))
-                  )}
-                </div>
+                    )}
 
-                <div className="flex gap-3">
-                  <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendMessage()} placeholder="Ask about your health..." className={`flex-1 px-4 py-3 rounded-lg border outline-none ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-gray-300'}`} />
-                  <button onClick={sendMessage} className="bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 transition">
-                    <Send className="w-5 h-5" />
+                    <div
+                      className={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed relative group ${
+                        msg.role === 'user'
+                          ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-tr-none shadow-lg shadow-cyan-500/20'
+                          : darkMode
+                          ? 'bg-slate-900/80 border border-slate-800 text-slate-200 rounded-tl-none'
+                          : 'bg-white border border-slate-200 text-slate-800 rounded-tl-none'
+                      }`}
+                    >
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+
+                      {/* Copy Action */}
+                      {msg.role === 'assistant' && (
+                        <button
+                          onClick={() => copyToClipboard(msg.content, index)}
+                          className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition bg-slate-800/80 text-slate-300 hover:text-white"
+                          title="Copy text"
+                        >
+                          {copiedIndex === index ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Loading Bouncing Dots Indicator */}
+                {chatLoading && (
+                  <div className="flex gap-3 justify-start">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white shrink-0">
+                      <Brain className="w-4 h-4" />
+                    </div>
+                    <div className={`p-4 rounded-2xl rounded-tl-none border flex items-center gap-1.5 ${darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-bounce" />
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-bounce [animation-delay:0.2s]" />
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-bounce [animation-delay:0.4s]" />
+                    </div>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Chat Input Area */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                  placeholder="Ask any health question or inquire about your report..."
+                  className={`flex-1 px-5 py-4 rounded-2xl border text-sm outline-none transition-all ${
+                    darkMode
+                      ? 'bg-slate-900/80 border-slate-800 text-white focus:border-cyan-500/60'
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-cyan-500'
+                  }`}
+                />
+
+                <button
+                  disabled={!chatInput.trim() || chatLoading}
+                  onClick={() => sendMessage()}
+                  className={`p-4 rounded-2xl font-bold transition-all shadow-lg ${
+                    !chatInput.trim() || chatLoading
+                      ? 'opacity-40 cursor-not-allowed bg-slate-800 text-slate-500'
+                      : 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:scale-105 shadow-cyan-500/25'
+                  }`}
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* SAVED USER REPORTS PAGE */}
+          {currentPage === 'reports' && (
+            <motion.div
+              key="reports"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12"
+            >
+              <h2 className="text-3xl font-extrabold mb-2">Saved Medical Reports</h2>
+              <p className={`text-sm mb-8 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                Past report analyses saved securely to your account
+              </p>
+
+              {savedUserReports.length === 0 ? (
+                <div className={`p-12 text-center rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <FileText className="w-12 h-12 text-slate-500 mx-auto mb-4" />
+                  <p className="text-lg font-bold mb-2">No saved reports yet</p>
+                  <p className="text-xs text-slate-400 mb-6">Upload a report while logged in to save analyses to your account.</p>
+                  <button
+                    onClick={() => setCurrentPage('upload')}
+                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm"
+                  >
+                    Upload Report Now
                   </button>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </main>
-      </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {savedUserReports.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-6 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <FileText className="w-6 h-6 text-cyan-400" />
+                          <div>
+                            <h4 className="font-bold text-sm truncate max-w-[200px]">{item.filename}</h4>
+                            <p className="text-xs text-slate-400">{new Date(item.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-400">
+                          Score: {item.health_score}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setAnalysisResults({
+                            patientInfo: { age: "34", gender: "Not specified", testDate: new Date(item.created_at).toLocaleDateString() },
+                            healthScore: item.health_score || 75,
+                            summaryPatientFriendly: item.analysis.simpleExplanation || item.analysis.summary || "Report analysis",
+                            riskLevel: item.analysis.riskLevel || "Moderate",
+                            alerts: item.analysis.abnormalFindings?.map(a => ({ title: a.name, value: a.value })) || [],
+                            biomarkers: item.analysis.biomarkers || [],
+                            medicines: item.analysis.medicines || [],
+                            recommendations: { nutrition: item.analysis.dietRecommendations || [], lifestyle: item.analysis.lifestyleRecommendations || [] },
+                            doctorQuestions: item.analysis.doctorQuestions || [],
+                            imageQualityNotes: item.analysis.imageQualityNotes || ""
+                          });
+                          setCurrentPage('analysis');
+                        }}
+                        className="w-full py-2.5 rounded-xl border border-cyan-500/30 text-cyan-400 text-xs font-bold hover:bg-cyan-500/10 transition"
+                      >
+                        View Full Analysis
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
 
-      {/* Footer Disclaimer */}
-      <footer className={`border-t ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-200'} p-4 text-center text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-        <p>
-          ⚠️ <strong>Medical Disclaimer:</strong> This analysis is educational only and not a substitute for professional medical advice. Always consult your healthcare provider.
-        </p>
-      </footer>
+        </AnimatePresence>
+      </main>
+
+      {/* FIGMA GLASSMORPHISM AUTHENTICATION MODAL */}
+      {authModalOpen && (
+        <div className="fixed inset-0 backdrop-blur-md bg-black/60 z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`w-full max-w-md p-8 rounded-3xl border shadow-2xl relative ${darkMode ? 'glass-modal-dark text-white' : 'glass-modal-light text-slate-900'}`}
+          >
+            <button
+              onClick={() => setAuthModalOpen(false)}
+              className="absolute top-6 right-6 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center mx-auto mb-3 text-white shadow-lg shadow-cyan-500/30">
+                <Lock className="w-6 h-6" />
+              </div>
+              <h3 className="text-2xl font-extrabold">
+                {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                {authMode === 'login' ? 'Sign in to access saved reports and AI chat history' : 'Register to manage your medical intelligence profile'}
+              </p>
+            </div>
+
+            {/* Error Alert */}
+            {authError && (
+              <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              {authMode === 'register' && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 mb-1 block">Full Name</label>
+                  <div className="relative">
+                    <User className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      value={authForm.full_name}
+                      onChange={e => setAuthForm({ ...authForm, full_name: e.target.value })}
+                      placeholder="Dr. Sarah Mitchell"
+                      className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 mb-1 block">Email Address</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                  <input
+                    type="email"
+                    required
+                    value={authForm.email}
+                    onChange={e => setAuthForm({ ...authForm, email: e.target.value })}
+                    placeholder="doctor@medintel.ai"
+                    className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-400 mb-1 block">Password</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={authForm.password}
+                    onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
+                    placeholder="••••••••"
+                    className={`w-full pl-11 pr-11 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-3.5 text-slate-400 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:scale-[1.01] active:scale-[0.99] transition flex items-center justify-center gap-2 mt-2"
+              >
+                {authLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+              </button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
+                className="text-xs font-semibold text-cyan-400 hover:underline"
+              >
+                {authMode === 'login' ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
     </div>
   );
 }
-
