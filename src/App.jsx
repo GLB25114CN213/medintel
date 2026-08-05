@@ -4,7 +4,7 @@ import {
   Upload, Send, TrendingUp, AlertCircle, Heart, Brain, Shield, Zap, ChevronDown,
   Menu, X, Plus, Trash2, Download, Eye, EyeOff, ArrowRight, BarChart3, Activity,
   FileText, CheckCircle, Clock, Home, Settings, LogOut, Bell, Search, Calendar,
-  User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon
+  User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon, Printer
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, RadarChart, PolarGrid,
@@ -771,19 +771,31 @@ export default function MedIntelAI() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="px-3 py-1 rounded-full text-xs font-extrabold uppercase bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-                      Medical Findings Analysis
+                      8-Section Clinical Report Findings
                     </span>
                     <span className="text-xs text-slate-400">Date: {analysisResults.patientInfo.testDate}</span>
                   </div>
-                  <h2 className="text-3xl font-extrabold">Comprehensive Clinical Findings</h2>
+                  <h2 className="text-3xl font-extrabold">Full Report Findings Analysis</h2>
                 </div>
 
-                <button
-                  onClick={() => setCurrentPage('chat')}
-                  className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-sm font-bold shadow-xl shadow-cyan-500/25 hover:scale-105 transition flex items-center gap-2"
-                >
-                  <Brain className="w-5 h-5" /> Consult AI Assistant About This Report
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-4 py-3 rounded-2xl bg-slate-800 text-cyan-400 border border-cyan-500/30 text-xs font-bold shadow-lg hover:bg-slate-700 transition flex items-center gap-2"
+                    title="Print or Export Full 8-Section Clinical Report to PDF"
+                  >
+                    <Printer className="w-4 h-4" /> Print / Save PDF Report
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage('chat')}
+                    className="px-5 py-3 rounded-2xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-xs font-bold shadow-xl shadow-cyan-500/25 hover:scale-105 transition flex items-center gap-2"
+                  >
+                    <Brain className="w-4 h-4" /> Consult AI Assistant
+                  </button>
+                </div>
               </div>
 
               {/* 1. PATIENT & HOSPITAL METADATA CARD */}
@@ -1117,11 +1129,23 @@ export default function MedIntelAI() {
                     </p>
                   </div>
 
-                  {/* OCR Legibility Assessment */}
+                  {/* Section 8: Analysis Confidence Score Card */}
+                  {analysisResults.section8_confidenceScore && (
+                    <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-cyan-950/30 border-cyan-800/50' : 'bg-cyan-50 border-cyan-200'}`}>
+                      <h5 className="text-xs font-bold text-cyan-400 flex items-center gap-2 mb-1 uppercase tracking-wide">
+                        <Shield className="w-4 h-4" /> Section 8: Analysis Confidence Score ({analysisResults.section8_confidenceScore.percentage}%)
+                      </h5>
+                      <p className={`text-xs ${darkMode ? 'text-cyan-300' : 'text-cyan-900'}`}>
+                        {analysisResults.section8_confidenceScore.reasoning}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Document & Handwriting Assessment */}
                   {analysisResults.imageQualityNotes && (
                     <div className={`p-4 rounded-2xl border ${darkMode ? 'bg-indigo-950/30 border-indigo-800/50' : 'bg-indigo-50 border-indigo-200'}`}>
                       <h5 className="text-xs font-bold text-indigo-400 flex items-center gap-2 mb-1 uppercase tracking-wide">
-                        <FileText className="w-4 h-4" /> Document & Handwriting Assessment
+                        <FileText className="w-4 h-4" /> Document & Quality Assessment
                       </h5>
                       <p className={`text-xs ${darkMode ? 'text-indigo-300' : 'text-indigo-800'}`}>
                         {analysisResults.imageQualityNotes}
