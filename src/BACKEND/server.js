@@ -553,18 +553,17 @@ app.get("/api/chat/history", authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// SPA CATCH-ALL ROUTE FOR RENDER & PRODUCTION SERVERS
+// SPA FALLBACK ROUTE FOR EXPRESS 5 & RENDER SERVERS
 // ----------------------------------------------------
 
-app.get("*", (req, res, next) => {
-  if (req.path.startsWith("/api") || req.path === "/analyze") {
-    return next();
+app.use((req, res, next) => {
+  if (req.method === "GET" && !req.path.startsWith("/api") && req.path !== "/analyze") {
+    const indexPath = path.resolve("dist", "index.html");
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
   }
-  const indexPath = path.resolve("dist", "index.html");
-  if (fs.existsSync(indexPath)) {
-    return res.sendFile(indexPath);
-  }
-  res.status(404).send("MedIntel AI Frontend Build Not Found. Please ensure npm run build was executed.");
+  next();
 });
 
 const PORT = process.env.PORT || 5001;
