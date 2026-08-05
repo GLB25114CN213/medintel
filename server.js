@@ -251,12 +251,32 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     console.log("📄 File received:", originalName, "| MimeType:", req.file.mimetype, "| Size:", req.file.size);
 
     let extractedText = "";
-    const fileBuffer = fs.readFileSync(filePath);
-    const fileBase64 = fileBuffer.toString("base64");
-    const mimeType = req.file.mimetype || "image/jpeg";
+    let fileBuffer = fs.readFileSync(filePath);
+    let mimeType = req.file.mimetype || "image/jpeg";
     const ext = path.extname(originalName).toLowerCase();
 
-    // 1. Extract text from PDF if applicable
+    // Standardize mimeType for images
+    if (ext === ".png") mimeType = "image/png";
+    if (ext === ".webp") mimeType = "image/webp";
+    if ([".jpg", ".jpeg", ".heic"].includes(ext)) mimeType = "image/jpeg";
+
+    // 1. Image Pre-processing with Sharp (Auto-rotate EXIF orientation & normalize contrast)
+    if (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp"].includes(ext)) {
+      try {
+        if (sharp) {
+          fileBuffer = await sharp(fileBuffer)
+            .rotate() // Auto-orient EXIF camera phone orientation!
+            .normalize() // High-contrast legibility for lab reports
+            .toBuffer();
+        }
+      } catch (sharpErr) {
+        console.error("⚠️ Sharp image pre-processing warning:", sharpErr.message);
+      }
+    }
+
+    let fileBase64 = fileBuffer.toString("base64");
+
+    // 2. Extract text from PDF
     if (mimeType === "application/pdf" || ext === ".pdf") {
       try {
         const parseFunc = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
@@ -269,22 +289,13 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
       extractedText = fileBuffer.toString("utf8");
     }
 
-    // 2. OCR via Tesseract if needed
+    // 3. OCR via Tesseract for image files
     if (!extractedText.trim() && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp"].includes(ext))) {
       try {
-        let processedBuffer = fileBuffer;
-        if (sharp) {
-          try {
-            processedBuffer = await sharp(fileBuffer)
-              .resize({ width: 1500, withoutEnlargement: true })
-              .grayscale()
-              .toBuffer();
-          } catch (e) {}
-        }
-        const ocrResult = await Tesseract.recognize(processedBuffer, "eng");
+        const ocrResult = await Tesseract.recognize(fileBuffer, "eng");
         extractedText = ocrResult.data.text || "";
       } catch (ocrErr) {
-        console.error("⚠️ OCR warning:", ocrErr.message);
+        console.error("⚠️ Tesseract OCR warning:", ocrErr.message);
       }
     }
 
@@ -297,20 +308,16 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     const promptText = `
 You are MedIntel AI, a board-certified clinical medical document and mobile lab slip photo analyzer.
 
-MOBILE PHOTO & PATHOLOGY SLIP RECOGNITION INSTRUCTIONS:
-1. CAREFULLY INSPECT THE IMAGE DATA AT ALL ANGLES & LIGHTING CONDITIONS:
-   - Recognize physical lab report printouts, angled camera phone photos, lab headers (e.g., "Medico Diagnostics", "PathKind", "Lal PathLabs"), patient names (e.g., "AYANSHI MISHRA"), doctor names (e.g., "DR. R. PANDEY MBBS.MD"), dates, and hospital ref numbers.
-   - Recognize Indian and global pathology lab units: "gm%", "g/dL", "/cmm", "/uL", "%", "Lac /cmm", "mg%", "cu microm", "pico gm".
-2. EXTRACT ALL BIOMARKERS & TEST LINES WITH 100% PRECISION:
-   - Extract Haemoglobin / Hemoglobin, TLC, Differential WBC count (Polymorphs, Lymphocytes, Eosinophils, Monocytes), TRBC, RBC Indices (PCV, MCV, MCH, MCHC), Platelet count, C.R.P (C-Reactive Protein), Liver Function, Kidney Function, Thyroid Panel, etc.
-   - For every biomarker: Extract exact test name, numerical result, unit, printed reference range (or supply general medical reference range if missing), and evaluate Status (Normal / High / Low / Critical / Borderline).
-3. KEY FINDINGS HIGHLIGHTING:
-   - Categorize key findings into: Normal, Abnormal, Borderline, and Critical.
-   - For inflammatory markers like high C.R.P (e.g., 41.84 mg%) or severe low Hemoglobin (e.g., 8.3 gm%), highlight them as CRITICAL / ABNORMAL findings requiring medical attention.
-4. CLINICAL SAFETY & HEDGED PHRASING:
-   - Clearly distinguish facts from interpretations. Do NOT state a definitive medical diagnosis.
-   - Use hedged language: "may be associated with", "can occur in", "could suggest".
-   - Never prescribe medication.
+CRITICAL INSTRUCTIONS FOR MOBILE CAMERA PHOTOS & PATHOLOGY SLIPS:
+1. CAREFULLY INSPECT THE IMAGE AT ALL ANGLES & LIGHTING CONDITIONS:
+   - Extract patient name (e.g., "AYANSHI MISHRA"), doctor name (e.g., "DR. R. PANDEY MBBS.MD"), lab name (e.g., "Medico Diagnostics"), report date (e.g., "23-05-2026"), and all lab numbers.
+   - Read all test names, numerical values, and reference ranges carefully (e.g., Haemoglobin 8.3 gm%, TLC 9400 /cmm, Polymorphs 82%, Lymphocytes 13%, TRBC 4.29, PCV 33.7%, MCV 78.6, MCH 19.2, MCHC 24.5%, Platelets 2.50 Lac/cmm, CRP 41.84 mg%).
+   - NEVER output "Not Available" for a biomarker if a numerical result is present on the report image!
+2. GENERAL MEDICAL REFERENCE RANGES:
+   - Extract printed reference ranges or supply general medical reference ranges if missing.
+3. EVALUATE STATUS: Normal / High / Low / Critical / Borderline.
+4. CLINICAL SAFETY:
+   - Do NOT give a definitive medical diagnosis. Use hedged phrasing ("may be associated with", "can occur in"). Never prescribe medication.
 
 DOCUMENT TEXT (IF EXTRACTED BY OCR):
 ${sanitizedExtractedText}
@@ -409,18 +416,20 @@ Return STRICT JSON matching this EXACT 8-SECTION structure:
 
     let responseText = "";
 
-    // 1. Try Gemini Vision multi-modal path first
+    // 1. Try Gemini Vision multi-modal path with proper Parts structure
     if (googleAI) {
       try {
         console.log("⚡ Executing Gemini 2.5 Flash Vision Analysis...");
         const contentsPayload = [
           {
             inlineData: {
-              mimeType: mimeType.startsWith("image/") ? mimeType : (mimeType === "application/pdf" ? "application/pdf" : "image/jpeg"),
+              mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg",
               data: fileBase64
             }
           },
-          promptText
+          {
+            text: promptText
+          }
         ];
         const geminiRes = await googleAI.models.generateContent({
           model: "gemini-2.5-flash",
