@@ -1,57 +1,50 @@
 /**
- * MedIntel AI – Vercel Serverless Entry
- * Fail-safe serverless handler for Vercel Edge / Serverless functions
+ * MedIntel AI – Vercel Serverless Handler
+ * Dual Engine: Gemini 2.0 Flash Vision (Primary) + Groq Llama 3.3 70B (Fallback)
  */
 
 import express from "express";
 import cors from "cors";
 import multer from "multer";
 import Groq from "groq-sdk";
+import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "15mb" }));
 
-// Memory storage — Vercel has no writable disk
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
 });
 
-// Lazy Groq client to prevent top-level initialization crash on Vercel
-function getGroqClient() {
-  const fallbackKey = Buffer.from("Z3NrX0RpNm5STDVGdEZRTXZnWWRGdlNXR2R5YjNGWVBNcllDdEtudFppQlFDNGdEMU1acDFoaA==", "base64").toString("utf8");
-  const apiKey = process.env.GROQ_API_KEY || fallbackKey;
-  try {
-    return new Groq({ apiKey });
-  } catch (e) {
-    console.error("Groq init error:", e.message);
-    return null;
-  }
+function getAiClients() {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const fallbackGroq = Buffer.from("Z3NrX0RpNm5STDVGdEZRTXZnWWRGdlNXR2R5YjNGWVBNcllDdEtudFppQlFDNGdEMU1acDFoaA==", "base64").toString("utf8");
+  const groqKey   = process.env.GROQ_API_KEY || fallbackGroq;
+
+  const googleAI = geminiKey ? new GoogleGenAI({ apiKey: geminiKey }) : null;
+  const groq     = groqKey   ? new Groq({ apiKey: groqKey })          : null;
+
+  return { googleAI, groq };
 }
 
-function buildPrompt(extractedText, fileType) {
-  const context = fileType === "image"
-    ? "The text below was extracted from a medical report document."
-    : "The text below was extracted from a medical document (PDF or text file).";
-
-  return `You are MedIntel AI, an expert medical document analysis system.
-
-${context}
+function buildPrompt(ocrText) {
+  return `You are MedIntel AI — an expert medical document analysis system.
 
 STRICT RULES:
-1. Analyse ONLY the extracted text from the uploaded medical report.
-2. NEVER invent, assume, or hallucinate any value not present in the text.
-3. If a value is missing or unreadable, write exactly: "Not Available"
+1. Analyse ONLY the medical report in the image / extracted text.
+2. NEVER invent, assume, or hallucinate any value not present in the document.
+3. If a value is missing or unreadable write exactly: "Not Available"
 4. Supply standard WHO/ICMR reference ranges where the report omits them.
 5. If no medical report content is found respond: {"isMedicalReport": false}
 
-EXTRACTED TEXT FROM DOCUMENT:
+DOCUMENT / TEXT CONTENT:
 """
-${extractedText}
+${ocrText || "Analyse the attached medical report image."}
 """
 
-Return ONLY a valid JSON object (no markdown fences) with this structure:
+Return ONLY a valid JSON object (no markdown) with this structure:
 {
   "isMedicalReport": true,
   "documentType": "<e.g. Complete Blood Count, LFT, MRI, ECG, Prescription>",
@@ -115,77 +108,88 @@ Return ONLY a valid JSON object (no markdown fences) with this structure:
 
 app.post("/analyze", (req, res) => {
   upload.single("file")(req, res, async (err) => {
-    if (err) {
-      return res.status(400).json({ success: false, error: err.message || "File upload failed." });
-    }
+    if (err) return res.status(400).json({ success: false, error: err.message || "Upload failed." });
 
     try {
-      if (!req.file) {
-        return res.status(400).json({ success: false, error: "No file uploaded." });
-      }
+      if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded." });
 
-      const groq = getGroqClient();
-      if (!groq) {
-        return res.status(503).json({ success: false, error: "Groq AI client initialization failed." });
+      const { googleAI, groq } = getAiClients();
+      if (!googleAI && !groq) {
+        return res.status(503).json({ success: false, error: "No AI service configured." });
       }
 
       const originalName = req.file.originalname || "document";
       const ext = ("." + (originalName.split(".").pop() || "")).toLowerCase();
-      const mimeType = req.file.mimetype || "application/octet-stream";
+      let mimeType = req.file.mimetype || "application/octet-stream";
       const rawBuffer = req.file.buffer;
 
       const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".tiff"];
+      if ([".jpg", ".jpeg", ".heic"].includes(ext)) mimeType = "image/jpeg";
+      else if (ext === ".png")  mimeType = "image/png";
+      else if (ext === ".webp") mimeType = "image/webp";
+      else if (ext === ".pdf")  mimeType = "application/pdf";
+
       const isImage = IMAGE_EXTS.includes(ext) || mimeType.startsWith("image/");
       const isPDF   = mimeType === "application/pdf" || ext === ".pdf";
 
       let extractedText = "";
-      let fileType = "document";
-
-      // PDF extraction
       if (isPDF) {
         try {
           const pdfParse = (await import("pdf-parse")).default;
           const pdfData  = await pdfParse(rawBuffer);
           extractedText  = (pdfData.text || "").trim();
-          fileType = "pdf";
         } catch (e) {
-          console.error("PDF parse error:", e.message);
-          extractedText = `[PDF text extraction failed for: ${originalName}]`;
+          console.error("PDF error:", e.message);
         }
       } else if ([".txt", ".csv"].includes(ext) || mimeType.startsWith("text/")) {
         extractedText = rawBuffer.toString("utf8");
-        fileType = "text";
-      } else if (isImage) {
-        extractedText = `[Medical Report Image: ${originalName}]\nFile size: ${rawBuffer.length} bytes`;
-        fileType = "image";
       }
 
-      if (!extractedText.trim()) {
-        extractedText = `[No readable text found in: ${originalName}]`;
+      const promptText = buildPrompt(extractedText.substring(0, 10000));
+      let responseText = "";
+
+      // 1. Gemini Vision (Direct Pixel AI)
+      if (googleAI) {
+        try {
+          const parts = isImage
+            ? [
+                { inlineData: { mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg", data: rawBuffer.toString("base64") } },
+                { text: promptText },
+              ]
+            : [{ text: promptText }];
+
+          const geminiRes = await googleAI.models.generateContent({
+            model: "gemini-2.0-flash",
+            contents: [{ role: "user", parts }],
+            config: { generationConfig: { responseMimeType: "application/json" } },
+          });
+          responseText = geminiRes.text || "";
+        } catch (e) {
+          console.error("Vercel Gemini error:", e.message);
+        }
       }
 
-      const prompt = buildPrompt(extractedText.substring(0, 10000), fileType);
+      // 2. Groq Fallback
+      if (!responseText && groq) {
+        try {
+          const r = await groq.chat.completions.create({
+            model: "llama-3.3-70b-versatile",
+            messages: [{ role: "user", content: promptText }],
+            response_format: { type: "json_object" },
+            max_tokens: 4096,
+            temperature: 0.1,
+          });
+          responseText = r.choices[0]?.message?.content || "";
+        } catch (e) {
+          console.error("Vercel Groq error:", e.message);
+        }
+      }
 
-      // Groq Llama 3.3 70B
-      const r = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        max_tokens: 4096,
-        temperature: 0.1,
-      });
-
-      const responseText = r.choices[0]?.message?.content || "";
       if (!responseText) {
-        return res.status(503).json({ success: false, error: "AI service returned empty response." });
+        return res.status(503).json({ success: false, error: "AI analysis service unavailable." });
       }
 
-      const clean = responseText
-        .replace(/^```json\s*/i, "")
-        .replace(/^```\s*/i, "")
-        .replace(/```\s*$/i, "")
-        .trim();
-
+      const clean = responseText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
       const parsed = JSON.parse(clean);
 
       if (parsed.isMedicalReport === false) {
@@ -196,7 +200,7 @@ app.post("/analyze", (req, res) => {
 
     } catch (err) {
       console.error("❌ Vercel /analyze error:", err);
-      return res.status(500).json({ success: false, error: err.message || "Serverless analysis error." });
+      return res.status(500).json({ success: false, error: err.message || "Server error." });
     }
   });
 });
@@ -208,10 +212,7 @@ app.post("/api/chat", async (req, res) => {
       return res.status(400).json({ success: false, error: "Messages required." });
     }
 
-    const groq = getGroqClient();
-    if (!groq) {
-      return res.status(503).json({ success: false, error: "Groq AI client unavailable." });
-    }
+    const { googleAI, groq } = getAiClients();
 
     const safeMessages = messages.slice(-12).map(m => ({
       role: m.role === "user" ? "user" : "assistant",
@@ -231,20 +232,41 @@ PATIENT REPORT:
 
     const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nAlways recommend consulting a qualified doctor. Keep responses clear and empathetic.`;
 
-    const r = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...safeMessages,
-      ],
-    });
+    let reply = "";
 
-    const reply = r.choices[0]?.message?.content || "AI chat is temporarily unavailable. Please try again.";
+    if (googleAI) {
+      try {
+        const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
+        const r = await googleAI.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+        });
+        reply = r.text || "";
+      } catch (e) {
+        console.error("Gemini chat error:", e.message);
+      }
+    }
+
+    if (!reply && groq) {
+      try {
+        const r = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...safeMessages,
+          ],
+        });
+        reply = r.choices[0]?.message?.content || "";
+      } catch (e) {
+        console.error("Groq chat error:", e.message);
+      }
+    }
+
+    if (!reply) reply = "AI chat is temporarily unavailable. Please try again.";
     return res.json({ success: true, message: { role: "assistant", content: reply } });
 
   } catch (e) {
-    console.error("❌ Vercel /api/chat error:", e);
-    return res.status(500).json({ success: false, error: e.message || "Chat service error." });
+    return res.status(500).json({ success: false, error: "Chat service error." });
   }
 });
 

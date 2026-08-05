@@ -1,7 +1,9 @@
 /**
  * MedIntel AI – Production Backend Server
- * AI Engine: Groq Llama 3.3 70B (text) + Tesseract OCR + Sharp (image)
- * Gemini: REMOVED
+ * Multi-Engine Architecture:
+ *   1. Google Gemini 2.0 Flash (Multimodal Vision — Direct Pixel OCR/Extraction)
+ *   2. Groq Llama 3.3 70B (Text / PDF Extraction)
+ *   3. Sharp + Tesseract.js (Fallback OCR Pipeline)
  */
 
 import express from "express";
@@ -13,6 +15,7 @@ import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import Groq from "groq-sdk";
+import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import pdfParse from "pdf-parse";
 import Tesseract from "tesseract.js";
@@ -24,7 +27,6 @@ import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./src/
 dotenv.config();
 
 const app = express();
-
 app.disable("x-powered-by");
 
 app.use(
@@ -76,14 +78,18 @@ const upload = multer({
   fileFilter: (_req, _file, cb) => cb(null, true),
 });
 
-// ── GROQ SETUP ───────────────────────────────────────────────────
-const groqApiKey = process.env.GROQ_API_KEY;
-const groq = new Groq({ apiKey: groqApiKey });
+// ── AI CLIENTS ───────────────────────────────────────────────────
+const groqApiKey   = process.env.GROQ_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
+
+const groq     = groqApiKey   ? new Groq({ apiKey: groqApiKey })          : null;
+const googleAI = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
 console.log("🚀 MedIntel Backend starting...");
-console.log("   AI Engine: Groq Llama 3.3 70B ✅");
-console.log("   OCR Engine: Tesseract.js ✅");
-console.log("   Image Processing: Sharp ✅");
+console.log(`   Gemini 2.0 Flash Vision: ${googleAI ? "✅ READY" : "⚠️ NO KEY (set GEMINI_API_KEY=AIzaSy...)"}`);
+console.log(`   Groq Llama 3.3 70B     : ${groq     ? "✅ READY" : "⚠️ NO KEY"}`);
+console.log("   OCR Engine             : Tesseract.js ✅");
+console.log("   Image Processing       : Sharp ✅");
 
 // ── INPUT VALIDATION ─────────────────────────────────────────────
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -148,18 +154,18 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
 
 // ── MEDICAL ANALYSIS PROMPT ───────────────────────────────────────
 function buildMedicalPrompt(ocrText) {
-  return `You are MedIntel AI, an expert medical document analysis system.
+  return `You are MedIntel AI — an expert medical document analysis system.
 
 STRICT RULES:
-1. Analyse ONLY the text extracted from the uploaded medical report below.
-2. NEVER invent, assume, or hallucinate any value not present in the text.
-3. If a value is missing write exactly: "Not Available"
+1. Analyse ONLY the document visible in the current image / extracted text.
+2. NEVER invent, assume, or hallucinate any value not present in the document.
+3. If a value is missing or unreadable write exactly: "Not Available"
 4. Supply standard WHO/ICMR reference ranges where the report omits them.
 5. If no medical report content is found respond: {"isMedicalReport": false}
 
-EXTRACTED OCR TEXT FROM DOCUMENT:
+DOCUMENT / OCR CONTENT:
 """
-${ocrText}
+${ocrText || "Analyse the attached medical report image directly."}
 """
 
 Return ONLY a valid JSON object (no markdown fences) with this exact structure:
@@ -257,89 +263,99 @@ app.post(
       const isImage = IMAGE_EXTS.includes(ext) || mimeType.startsWith("image/");
       const isPDF   = mimeType === "application/pdf" || ext === ".pdf";
 
-      console.log(`\n📄 [analyze] file=${originalName} | size=${req.file.size}B`);
+      console.log(`\n📄 [analyze] file=${originalName} | size=${req.file.size}B | mime=${mimeType}`);
 
       let rawBuffer = fs.readFileSync(filePath);
-
-      // ── Sharp: EXIF auto-rotate + contrast enhancement ──────────
       let processedBuffer = rawBuffer;
+
+      // ── Sharp image pre-processing ──────────────────────────────
       if (isImage) {
         try {
           processedBuffer = await sharp(rawBuffer)
-            .rotate()                              // Auto-fix phone camera EXIF rotation
+            .rotate()
             .resize({ width: 2500, fit: "inside", withoutEnlargement: false })
-            .grayscale()                           // Grayscale improves OCR accuracy
-            .normalize()                           // Stretch contrast for legibility
-            .sharpen({ sigma: 1 })                 // Sharpen text edges
+            .normalize()
             .toBuffer();
-          console.log("   ✅ Sharp: EXIF-rotate + contrast applied");
+          mimeType = "image/jpeg";
         } catch (sharpErr) {
-          console.error("   ⚠️ Sharp failed:", sharpErr.message, "— using raw buffer");
+          console.error("   ⚠️ Sharp failed:", sharpErr.message);
           processedBuffer = rawBuffer;
         }
       }
 
-      // ── Text extraction: PDF ─────────────────────────────────────
+      // ── Text extraction pass (PDF or Tesseract OCR) ─────────────
       let ocrText = "";
       if (isPDF) {
         try {
           const parseFn = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
           const pdfData = await parseFn(rawBuffer);
           ocrText = (pdfData.text || "").trim();
-          if (ocrText) console.log(`   ✅ PDF text extracted: ${ocrText.length} chars`);
         } catch (pdfErr) {
           console.error("   ⚠️ PDF parse failed:", pdfErr.message);
         }
-      } else if ([".txt", ".csv"].includes(ext) || mimeType.startsWith("text/")) {
-        ocrText = rawBuffer.toString("utf8");
-      }
-
-      // ── Tesseract OCR for images ─────────────────────────────────
-      if (isImage) {
+      } else if (isImage) {
         try {
-          console.log("   🔍 Running Tesseract OCR...");
           const ocrResult = await Tesseract.recognize(processedBuffer, "eng", { logger: () => {} });
-          const tesseractText = (ocrResult.data.text || "").trim();
-          if (tesseractText) {
-            ocrText = ocrText ? `${ocrText}\n\n${tesseractText}` : tesseractText;
-            console.log(`   ✅ Tesseract OCR: ${tesseractText.length} chars extracted`);
-          } else {
-            console.warn("   ⚠️ Tesseract returned no text");
-          }
+          ocrText = (ocrResult.data.text || "").trim();
+          if (ocrText) console.log(`   ✅ Tesseract OCR: ${ocrText.length} chars extracted`);
         } catch (ocrErr) {
           console.error("   ⚠️ Tesseract failed:", ocrErr.message);
         }
       }
 
-      if (!ocrText.trim()) {
-        ocrText = `[No readable text found in uploaded file: ${originalName}]`;
+      const promptText = buildMedicalPrompt(ocrText.substring(0, 10000));
+      let responseText = "";
+
+      // ── Strategy 1: Gemini 2.0 Flash Vision (Direct Pixel AI) ───
+      if (googleAI) {
+        try {
+          console.log("   ⚡ Executing Gemini 2.0 Flash Vision...");
+          const parts = isImage
+            ? [
+                { inlineData: { mimeType: "image/jpeg", data: processedBuffer.toString("base64") } },
+                { text: promptText },
+              ]
+            : [{ text: promptText }];
+
+          const geminiRes = await googleAI.models.generateContent({
+            model: "gemini-2.0-flash",
+            contents: [{ role: "user", parts }],
+            config: { generationConfig: { responseMimeType: "application/json" } },
+          });
+
+          responseText = geminiRes.text || "";
+          if (responseText) console.log("   ✅ Gemini Vision success!");
+        } catch (geminiErr) {
+          console.error("   ⚠️ Gemini Vision error:", geminiErr.message);
+        }
       }
 
-      const ocrSnippet = ocrText.substring(0, 10000);
-      const promptText = buildMedicalPrompt(ocrSnippet);
-
-      // ── Groq Llama 3.3 70B Analysis ──────────────────────────────
-      let responseText = "";
-      try {
-        console.log("   ⚡ Calling Groq Llama 3.3 70B...");
-        const groqRes = await groq.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: promptText }],
-          response_format: { type: "json_object" },
-          max_tokens: 4096,
-          temperature: 0.1,
-        });
-        responseText = groqRes.choices[0]?.message?.content || "";
-        if (responseText) console.log(`   ✅ Groq responded: ${responseText.length} chars`);
-      } catch (groqErr) {
-        console.error("   ❌ Groq error:", groqErr.message);
+      // ── Strategy 2: Groq Llama 3.3 70B (OCR Text Analysis) ──────
+      if (!responseText && groq) {
+        try {
+          console.log("   ⚡ Executing Groq Llama 3.3 70B...");
+          const groqRes = await groq.chat.completions.create({
+            model: "llama-3.3-70b-versatile",
+            messages: [{ role: "user", content: promptText }],
+            response_format: { type: "json_object" },
+            max_tokens: 4096,
+            temperature: 0.1,
+          });
+          responseText = groqRes.choices[0]?.message?.content || "";
+          if (responseText) console.log("   ✅ Groq success!");
+        } catch (groqErr) {
+          console.error("   ⚠️ Groq error:", groqErr.message);
+        }
       }
 
       if (!responseText) {
-        return res.status(503).json({ success: false, error: "AI analysis service is temporarily unavailable. Please try again." });
+        return res.status(503).json({
+          success: false,
+          error: "AI services unavailable. Please check that GROQ_API_KEY or GEMINI_API_KEY is configured.",
+        });
       }
 
-      // ── Parse JSON ────────────────────────────────────────────────
+      // ── Parse & Validate JSON ────────────────────────────────────
       let parsed;
       try {
         const clean = responseText
@@ -349,8 +365,7 @@ app.post(
           .trim();
         parsed = JSON.parse(clean);
       } catch (parseErr) {
-        console.error("   ❌ JSON parse failed. Raw (500 chars):", responseText.slice(0, 500));
-        return res.status(500).json({ success: false, error: "AI returned an invalid response. Please try again." });
+        return res.status(500).json({ success: false, error: "AI returned invalid JSON." });
       }
 
       if (parsed.isMedicalReport === false) {
@@ -358,9 +373,8 @@ app.post(
       }
 
       const elapsedMs = Date.now() - t0;
-      console.log(`   ⏱️  Done in ${elapsedMs}ms`);
 
-      // ── Save to DB ────────────────────────────────────────────────
+      // Save to DB
       if (req.user?.id) {
         try {
           const hs = Number(parsed.section4_overallAssessment?.healthScore || parsed.healthScore) || 75;
@@ -408,34 +422,44 @@ PATIENT REPORT CONTEXT:
 - Summary: ${reportContext.summaryPatientFriendly || "N/A"}
 - Abnormal Values: ${JSON.stringify(reportContext.alerts || [])}
 - All Biomarkers: ${JSON.stringify(reportContext.biomarkers || [])}
-- Doctor Suggestion: ${reportContext.doctorSuggestion || "N/A"}
 `;
     }
 
-    const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.
-${ctxBlock}
-RULES:
-- Reference the patient's actual report data when answering.
-- Explain lab values and health metrics in simple everyday language.
-- Never make a definitive diagnosis. Always recommend consulting a doctor.
-- Keep replies structured, helpful, and empathetic.`;
+    const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nRULES:\n- Reference the patient's actual report data when answering.\n- Keep replies structured, helpful, and empathetic. Always recommend consulting a qualified doctor.`;
 
     let reply = "";
-    try {
-      const r = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...safeMessages.map(m => ({ role: m.role, content: m.content })),
-        ],
-        temperature: 0.7,
-      });
-      reply = r.choices[0]?.message?.content || "";
-    } catch (e) {
-      console.error("⚠️ Groq chat error:", e.message);
+
+    // 1. Try Gemini
+    if (googleAI) {
+      try {
+        const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
+        const r = await googleAI.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+        });
+        reply = r.text || "";
+      } catch (e) {
+        console.error("Gemini chat error:", e.message);
+      }
     }
 
-    if (!reply) reply = "I'm sorry — AI chat is temporarily unavailable. Please try again.";
+    // 2. Fallback to Groq
+    if (!reply && groq) {
+      try {
+        const r = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...safeMessages.map(m => ({ role: m.role, content: m.content })),
+          ],
+        });
+        reply = r.choices[0]?.message?.content || "";
+      } catch (e) {
+        console.error("Groq chat error:", e.message);
+      }
+    }
+
+    if (!reply) reply = "AI chat is temporarily unavailable. Please try again.";
 
     if (req.user?.id) {
       try {
@@ -447,7 +471,6 @@ RULES:
 
     return res.json({ success: true, message: { role: "assistant", content: reply } });
   } catch (e) {
-    console.error("❌ /api/chat:", e);
     return res.status(500).json({ success: false, error: "Chat service error." });
   }
 });
