@@ -306,18 +306,19 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     const sanitizedExtractedText = extractedText.substring(0, 8000);
 
     const promptText = `
-You are MedIntel AI, a board-certified clinical medical document and mobile lab slip photo analyzer.
+You are MedIntel AI, an expert medical document analysis AI.
 
-CRITICAL INSTRUCTIONS FOR MOBILE CAMERA PHOTOS & PATHOLOGY SLIPS:
-1. CAREFULLY INSPECT THE IMAGE AT ALL ANGLES & LIGHTING CONDITIONS:
-   - Extract patient name (e.g., "AYANSHI MISHRA"), doctor name (e.g., "DR. R. PANDEY MBBS.MD"), lab name (e.g., "Medico Diagnostics"), report date (e.g., "23-05-2026"), and all lab numbers.
-   - Read all test names, numerical values, and reference ranges carefully (e.g., Haemoglobin 8.3 gm%, TLC 9400 /cmm, Polymorphs 82%, Lymphocytes 13%, TRBC 4.29, PCV 33.7%, MCV 78.6, MCH 19.2, MCHC 24.5%, Platelets 2.50 Lac/cmm, CRP 41.84 mg%).
-   - NEVER output "Not Available" for a biomarker if a numerical result is present on the report image!
-2. GENERAL MEDICAL REFERENCE RANGES:
-   - Extract printed reference ranges or supply general medical reference ranges if missing.
-3. EVALUATE STATUS: Normal / High / Low / Critical / Borderline.
-4. CLINICAL SAFETY:
-   - Do NOT give a definitive medical diagnosis. Use hedged phrasing ("may be associated with", "can occur in"). Never prescribe medication.
+STRICT MEDICAL EXTRACTION & ANALYSIS RULES:
+1. Ignore all previous conversations, previous uploads, memory, examples, cached responses, and sample reports.
+2. Treat every request as a completely new medical report.
+3. Extract information ONLY from the uploaded image/document.
+4. Never assume, infer, or hallucinate values that are not visible.
+5. If any text or value is missing/unreadable, say "Unable to determine from the uploaded image" or "Not Available".
+6. Analyze specific document types accordingly (blood test, prescription, MRI, CT, ECG, discharge summary, X-ray, etc.).
+7. Never repeat findings from an earlier report.
+8. Generate the response solely from OCR/Vision data extracted from the current uploaded image.
+9. Analyze every page/section before producing the final response.
+10. If no medical report is detected, respond: "No valid medical report detected in the uploaded image."
 
 DOCUMENT TEXT (IF EXTRACTED BY OCR):
 ${sanitizedExtractedText}
@@ -325,27 +326,28 @@ ${sanitizedExtractedText}
 Return STRICT JSON matching this EXACT 8-SECTION structure:
 {
   "isMedicalReport": true,
-  "patientName": "Extracted Patient Name or Not Available",
-  "age": "Age or Not Available",
-  "gender": "Gender or Not Available",
-  "patientId": "Patient ID or Not Available",
-  "reportDate": "Report Date or Not Available",
-  "facilityName": "Doctor / Lab Name or Not Available",
-  "testType": "Test Panel Type or Not Available",
+  "documentType": "Extracted Document Type (e.g. Blood Examination Report, MRI, Prescription, etc.)",
+  "patientName": "Extracted Patient Name or Unable to determine from the uploaded image",
+  "age": "Age or Unable to determine from the uploaded image",
+  "gender": "Gender or Unable to determine from the uploaded image",
+  "patientId": "Patient ID or Unable to determine from the uploaded image",
+  "reportDate": "Report Date or Unable to determine from the uploaded image",
+  "facilityName": "Doctor / Lab Name or Unable to determine from the uploaded image",
+  "testType": "Test Panel Type or Unable to determine from the uploaded image",
 
   "section1_patientInformation": {
-    "name": "Patient Name or Not Available",
-    "age": "Age or Not Available",
-    "gender": "Gender or Not Available",
-    "patientId": "Patient ID or Not Available",
-    "reportDate": "Report Date or Not Available",
-    "facilityName": "Doctor / Lab Name or Not Available",
-    "testType": "Test Panel Type or Not Available"
+    "name": "Patient Name or Unable to determine from the uploaded image",
+    "age": "Age or Unable to determine from the uploaded image",
+    "gender": "Gender or Unable to determine from the uploaded image",
+    "patientId": "Patient ID or Unable to determine from the uploaded image",
+    "reportDate": "Report Date or Unable to determine from the uploaded image",
+    "facilityName": "Doctor / Lab Name or Unable to determine from the uploaded image",
+    "testType": "Test Panel Type or Unable to determine from the uploaded image"
   },
 
   "biomarkers": [
     {
-      "name": "Biomarker Name",
+      "name": "Biomarker / Test Name",
       "value": "12.5",
       "unit": "mg/dL",
       "normalRange": "12.0 - 15.0 mg/dL",
@@ -356,10 +358,10 @@ Return STRICT JSON matching this EXACT 8-SECTION structure:
 
   "section2_testSummaryTable": [
     {
-      "testName": "Biomarker Name",
+      "testName": "Biomarker / Test Name",
       "result": "Measured Value",
       "unit": "Unit",
-      "referenceRange": "General Medical Reference Range",
+      "referenceRange": "Reference Range",
       "status": "Normal / High / Low / Critical / Borderline"
     }
   ],
@@ -380,7 +382,7 @@ Return STRICT JSON matching this EXACT 8-SECTION structure:
   },
 
   "section4_overallAssessment": {
-    "summary": "Balanced clinical summary describing whether the report appears generally normal or contains abnormalities, its likely clinical significance, avoiding alarming language, and mentioning uncertainty where appropriate.",
+    "summary": "Balanced clinical summary describing whether the report appears generally normal or contains abnormalities based strictly on the current image.",
     "healthScore": 85,
     "riskLevel": "Low / Moderate / High"
   },
@@ -407,7 +409,7 @@ Return STRICT JSON matching this EXACT 8-SECTION structure:
 
   "section8_confidenceScore": {
     "percentage": 95,
-    "reasoning": "Confidence percentage based strictly on the quality, legibility, and completeness of the report."
+    "reasoning": "Confidence percentage based strictly on the quality, legibility, and completeness of the current uploaded report."
   },
 
   "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified medical doctor."
