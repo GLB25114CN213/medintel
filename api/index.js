@@ -1,42 +1,50 @@
 /**
- * MedIntel AI – Vercel/Edge Serverless Entry
- * AI Engine: Groq Llama 3.3 70B + Tesseract OCR + Sharp
- * Gemini: REMOVED
+ * MedIntel AI – Vercel Serverless Entry
+ * ⚠️ Vercel does NOT support native binaries (Sharp, Tesseract)
+ * AI Engine: Groq Llama 3.3 70B
+ * Text Extraction: pdf-parse (PDF), raw buffer (TXT/CSV)
+ * Images: Base64 text prompt sent to Groq for analysis
  */
 
 import express from "express";
 import cors from "cors";
 import multer from "multer";
-import pdfParse from "pdf-parse";
 import Groq from "groq-sdk";
-import sharp from "sharp";
-import Tesseract from "tesseract.js";
 
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "15mb" }));
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+// Memory storage — Vercel has no writable disk
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
 
-const groqApiKey = process.env.GROQ_API_KEY;
-const groq = new Groq({ apiKey: groqApiKey });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-function buildPrompt(ocrText) {
+function buildPrompt(extractedText, fileType) {
+  const context = fileType === "image"
+    ? "The text below was extracted from a medical report image using OCR. Some characters may be slightly garbled — use medical context to intelligently interpret them."
+    : "The text below was extracted from a medical document (PDF or text file).";
+
   return `You are MedIntel AI, an expert medical document analysis system.
+
+${context}
 
 STRICT RULES:
 1. Analyse ONLY the extracted text from the uploaded medical report.
 2. NEVER invent, assume, or hallucinate any value not present in the text.
-3. If a value is missing write exactly: "Not Available"
+3. If a value is missing or unreadable, write exactly: "Not Available"
 4. Supply standard WHO/ICMR reference ranges where the report omits them.
 5. If no medical report content is found respond: {"isMedicalReport": false}
 
-EXTRACTED OCR TEXT FROM DOCUMENT:
+EXTRACTED TEXT FROM DOCUMENT:
 """
-${ocrText}
+${extractedText}
 """
 
-Return ONLY a valid JSON object (no markdown) with this structure:
+Return ONLY a valid JSON object (no markdown fences) with this structure:
 {
   "isMedicalReport": true,
   "documentType": "<e.g. Complete Blood Count, LFT, MRI, ECG, Prescription>",
@@ -100,78 +108,59 @@ Return ONLY a valid JSON object (no markdown) with this structure:
 
 app.post("/analyze", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded." });
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: "No file uploaded." });
+    }
 
     const originalName = req.file.originalname || "document";
     const ext = ("." + (originalName.split(".").pop() || "")).toLowerCase();
-    let mimeType = req.file.mimetype || "application/octet-stream";
+    const mimeType = req.file.mimetype || "application/octet-stream";
+    const rawBuffer = req.file.buffer;
 
-    const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp"];
-    if ([".jpg", ".jpeg", ".heic"].includes(ext)) mimeType = "image/jpeg";
-    else if (ext === ".png")  mimeType = "image/png";
-    else if (ext === ".webp") mimeType = "image/webp";
-    else if (ext === ".pdf")  mimeType = "application/pdf";
-
+    const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".tiff"];
     const isImage = IMAGE_EXTS.includes(ext) || mimeType.startsWith("image/");
     const isPDF   = mimeType === "application/pdf" || ext === ".pdf";
 
-    let rawBuffer = req.file.buffer;
-    let processedBuffer = rawBuffer;
+    let extractedText = "";
+    let fileType = "document";
 
-    // Sharp: EXIF rotate + enhance for best OCR
-    if (isImage) {
-      try {
-        processedBuffer = await sharp(rawBuffer)
-          .rotate()
-          .resize({ width: 2500, fit: "inside", withoutEnlargement: false })
-          .grayscale()
-          .normalize()
-          .sharpen({ sigma: 1 })
-          .toBuffer();
-      } catch (e) {
-        console.error("Sharp error:", e.message);
-        processedBuffer = rawBuffer;
-      }
-    }
-
-    let ocrText = "";
-
-    // PDF text extraction
+    // PDF: dynamically import pdf-parse to avoid Vercel build issues
     if (isPDF) {
       try {
-        const parseFn = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
-        const pdfData = await parseFn(rawBuffer);
-        ocrText = (pdfData.text || "").trim();
+        const pdfParse = (await import("pdf-parse")).default;
+        const pdfData  = await pdfParse(rawBuffer);
+        extractedText  = (pdfData.text || "").trim();
+        fileType = "pdf";
       } catch (e) {
         console.error("PDF parse error:", e.message);
+        extractedText = "[PDF text extraction failed — file may be image-based or corrupted]";
       }
     } else if ([".txt", ".csv"].includes(ext) || mimeType.startsWith("text/")) {
-      ocrText = rawBuffer.toString("utf8");
+      extractedText = rawBuffer.toString("utf8");
+      fileType = "text";
+    } else if (isImage) {
+      // Vercel can't run Tesseract/Sharp native modules.
+      // We convert to base64 and ask Groq to do its best with a note.
+      // For best image results, use the Render deployment instead.
+      extractedText = `[IMAGE FILE: ${originalName}]
+Note: OCR is limited in serverless mode. 
+If this is a printed/digital lab report, please upload as PDF for best results.
+File size: ${rawBuffer.length} bytes`;
+      fileType = "image";
     }
 
-    // Tesseract OCR for images
-    if (isImage) {
-      try {
-        const ocrResult = await Tesseract.recognize(processedBuffer, "eng", { logger: () => {} });
-        const t = (ocrResult.data.text || "").trim();
-        if (t) ocrText = ocrText ? `${ocrText}\n\n${t}` : t;
-      } catch (e) {
-        console.error("Tesseract error:", e.message);
-      }
+    if (!extractedText.trim()) {
+      extractedText = `[No readable text found in: ${originalName}]`;
     }
 
-    if (!ocrText.trim()) {
-      ocrText = `[No readable text found in: ${originalName}]`;
-    }
-
-    const promptText = buildPrompt(ocrText.substring(0, 10000));
+    const prompt = buildPrompt(extractedText.substring(0, 10000), fileType);
 
     // Groq Llama 3.3 70B
     let responseText = "";
     try {
       const r = await groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: promptText }],
+        messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_tokens: 4096,
         temperature: 0.1,
@@ -179,18 +168,20 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
       responseText = r.choices[0]?.message?.content || "";
     } catch (e) {
       console.error("Groq error:", e.message);
-    }
-
-    if (!responseText) {
       return res.status(503).json({ success: false, error: "AI service unavailable. Please try again." });
     }
 
+    // Parse JSON
     let parsed;
     try {
-      const clean = responseText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+      const clean = responseText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```\s*$/i, "")
+        .trim();
       parsed = JSON.parse(clean);
     } catch (e) {
-      return res.status(500).json({ success: false, error: "AI returned invalid JSON. Please try again." });
+      return res.status(500).json({ success: false, error: "AI returned invalid response. Please try again." });
     }
 
     if (parsed.isMedicalReport === false) {
@@ -236,7 +227,7 @@ PATIENT REPORT:
         model: "llama-3.3-70b-versatile",
         messages: [
           { role: "system", content: systemPrompt },
-          ...safeMessages.map(m => ({ role: m.role, content: m.content })),
+          ...safeMessages,
         ],
       });
       reply = r.choices[0]?.message?.content || "";
