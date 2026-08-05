@@ -1,6 +1,6 @@
 /**
  * MedIntel AI – Vercel Serverless Handler
- * Dual Engine: Gemini 2.0 Flash Vision (Primary) + Groq Llama 3.3 70B (Fallback)
+ * Dual Engine: Gemini 2.0 Flash Vision (Primary if AIza key) + Groq Llama 3.3 70B (Primary fallback)
  */
 
 import express from "express";
@@ -23,8 +23,10 @@ function getAiClients() {
   const fallbackGroq = Buffer.from("Z3NrX0RpNm5STDVGdEZRTXZnWWRGdlNXR2R5YjNGWVBNcllDdEtudFppQlFDNGdEMU1acDFoaA==", "base64").toString("utf8");
   const groqKey   = process.env.GROQ_API_KEY || fallbackGroq;
 
-  const googleAI = geminiKey ? new GoogleGenAI({ apiKey: geminiKey }) : null;
-  const groq     = groqKey   ? new Groq({ apiKey: groqKey })          : null;
+  // Only instantiate Gemini if key starts with AIza (real Google AI Studio API key)
+  const isRealGeminiKey = geminiKey && geminiKey.trim().startsWith("AIza");
+  const googleAI = isRealGeminiKey ? new GoogleGenAI({ apiKey: geminiKey.trim() }) : null;
+  const groq     = groqKey ? new Groq({ apiKey: groqKey.trim() }) : null;
 
   return { googleAI, groq };
 }
@@ -114,10 +116,6 @@ app.post("/analyze", (req, res) => {
       if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded." });
 
       const { googleAI, groq } = getAiClients();
-      if (!googleAI && !groq) {
-        return res.status(503).json({ success: false, error: "No AI service configured." });
-      }
-
       const originalName = req.file.originalname || "document";
       const ext = ("." + (originalName.split(".").pop() || "")).toLowerCase();
       let mimeType = req.file.mimetype || "application/octet-stream";
@@ -149,8 +147,9 @@ app.post("/analyze", (req, res) => {
 
       const promptText = buildPrompt(extractedText.substring(0, 10000));
       let responseText = "";
+      let lastError = "";
 
-      // 1. Gemini Vision (Direct Pixel AI)
+      // 1. Gemini Vision (if real AIza key)
       if (googleAI) {
         try {
           const parts = isImage
@@ -168,6 +167,7 @@ app.post("/analyze", (req, res) => {
           responseText = geminiRes.text || "";
         } catch (e) {
           console.error("Vercel Gemini error:", e.message);
+          lastError = `Gemini: ${e.message}`;
         }
       }
 
@@ -184,11 +184,15 @@ app.post("/analyze", (req, res) => {
           responseText = r.choices[0]?.message?.content || "";
         } catch (e) {
           console.error("Vercel Groq error:", e.message);
+          lastError = lastError ? `${lastError} | Groq: ${e.message}` : `Groq: ${e.message}`;
         }
       }
 
       if (!responseText) {
-        return res.status(503).json({ success: false, error: "AI analysis service unavailable." });
+        return res.status(503).json({
+          success: false,
+          error: lastError || "AI analysis service is temporarily busy. Please try again in a moment.",
+        });
       }
 
       const clean = responseText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
