@@ -943,53 +943,80 @@ export default function MedIntelAI() {
                 </div>
               )}
 
-              {/* 5. COMPLETE BIOMARKERS & LAB RESULTS GRID (REFERENCE RANGE COMPARISON) */}
+              {/* 5. COMPLETE BIOMARKERS & LAB RESULTS TABLE (MATCHING USER SCREENSHOT TABLE FORMAT) */}
               {analysisResults.biomarkers?.length > 0 && (
                 <div className={`p-8 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
                     <h3 className="text-xl font-bold flex items-center gap-2">
-                      <Activity className="w-6 h-6 text-cyan-400" /> Test Summary & Reference Range Comparison
+                      <Activity className="w-6 h-6 text-cyan-400" /> Test Summary & Reference Range Comparison Table
                     </h3>
-                    <span className="text-xs text-slate-400 font-semibold">
-                      Color-Coded Status Labels Enabled
+                    <span className="text-xs text-cyan-400 font-semibold px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30">
+                      Clinical Lab Table Format Enabled
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {analysisResults.biomarkers.map((bm, i) => {
-                      const isAbnormal = bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal' || bm.status === 'critical';
-                      return (
-                        <div
-                          key={i}
-                          className={`p-5 rounded-2xl border transition-all ${
-                            isAbnormal
-                              ? darkMode ? 'bg-amber-950/20 border-amber-500/30' : 'bg-amber-50 border-amber-200'
-                              : darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-bold text-sm">{bm.name}</span>
-                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
-                              isAbnormal
-                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            }`}>
-                              {bm.status}
-                            </span>
-                          </div>
-                          <div className="flex items-baseline gap-2 mb-2">
-                            <span className={`text-2xl font-black ${isAbnormal ? 'text-amber-400' : 'text-cyan-400'}`}>{bm.value}</span>
-                            <span className="text-xs text-slate-400">{bm.unit}</span>
-                            <span className="text-xs text-slate-500 ml-auto">Normal Range: {bm.normalRange}</span>
-                          </div>
-                          {bm.significance && (
-                            <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                              {bm.significance}
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead>
+                        <tr className={`border-b text-xs uppercase tracking-wider ${darkMode ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-500'}`}>
+                          <th className="pb-3 px-3">Test Name</th>
+                          <th className="pb-3 px-3">Result</th>
+                          <th className="pb-3 px-3">Unit</th>
+                          <th className="pb-3 px-3">Reference Range</th>
+                          <th className="pb-3 px-3 text-center">Status</th>
+                          <th className="pb-3 px-3">Clinical Meaning & Significance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/10">
+                        {analysisResults.biomarkers.map((bm, i) => {
+                          const st = (bm.status || 'normal').toLowerCase();
+                          const isCritical = st.includes('critical');
+                          const isHigh = st.includes('high');
+                          const isLow = st.includes('low');
+                          const isBorderline = st.includes('borderline');
+
+                          let badgeClass = "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+                          let statusText = "NORMAL";
+
+                          if (isCritical) {
+                            badgeClass = "bg-rose-500/25 text-rose-300 border-rose-500/40 font-black animate-pulse";
+                            statusText = "CRITICAL HIGH";
+                          } else if (isHigh) {
+                            badgeClass = "bg-amber-500/20 text-amber-300 border-amber-500/30";
+                            statusText = "HIGH";
+                          } else if (isLow) {
+                            badgeClass = "bg-amber-500/20 text-amber-300 border-amber-500/30";
+                            statusText = "LOW";
+                          } else if (isBorderline) {
+                            badgeClass = "bg-purple-500/20 text-purple-300 border-purple-500/30";
+                            statusText = "BORDERLINE";
+                          }
+
+                          return (
+                            <tr key={i} className={`hover:bg-cyan-500/5 transition ${isCritical ? (darkMode ? 'bg-rose-950/20' : 'bg-rose-50') : ''}`}>
+                              <td className="py-4 px-3 font-bold max-w-[200px]">{bm.name}</td>
+                              <td className={`py-4 px-3 font-extrabold text-lg ${isCritical ? 'text-rose-400' : (isHigh || isLow) ? 'text-amber-400' : 'text-cyan-300'}`}>
+                                {bm.value}
+                              </td>
+                              <td className="py-4 px-3 text-xs text-slate-300 font-mono">
+                                <span className="px-2 py-1 rounded bg-slate-800 border border-slate-700">{bm.unit || '-'}</span>
+                              </td>
+                              <td className="py-4 px-3 text-xs text-slate-400 font-mono">
+                                <span className="px-2.5 py-1 rounded bg-slate-800/80 border border-slate-700/80">{bm.normalRange || 'Not Provided'}</span>
+                              </td>
+                              <td className="py-4 px-3 text-center">
+                                <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider border whitespace-nowrap ${badgeClass}`}>
+                                  {statusText}
+                                </span>
+                              </td>
+                              <td className={`py-4 px-3 text-xs leading-relaxed max-w-[320px] ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                                {bm.significance || 'Normal physiological value.'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
