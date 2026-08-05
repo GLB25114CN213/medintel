@@ -3,37 +3,20 @@ import cors from "cors";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
+import sharp from "sharp";
 import pdfParse from "pdf-parse";
+import Tesseract from "tesseract.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import db, { runQuery, getQuery, allQuery } from "./src/BACKEND/db.js";
-import { authenticateToken, optionalAuthenticateToken } from "./src/BACKEND/authMiddleware.js";
+import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./src/BACKEND/authMiddleware.js";
 
 dotenv.config();
-
-// Dynamic serverless-safe module imports
-let sharp = null;
-let Tesseract = null;
-
-try {
-  const sharpModule = await import("sharp");
-  sharp = sharpModule.default || sharpModule;
-} catch (e) {
-  console.log("ℹ️ Optional Sharp module skipped in serverless mode");
-}
-
-try {
-  const tessModule = await import("tesseract.js");
-  Tesseract = tessModule.default || tessModule;
-} catch (e) {
-  console.log("ℹ️ Optional Tesseract module skipped in serverless mode");
-}
 
 const app = express();
 
@@ -47,12 +30,12 @@ app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
-        defaultSrc: ["'self'"],
+        defaultSrc: ["'self'", "*"],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.tailwindcss.com"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
-        imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'", "http://localhost:5001", "http://127.0.0.1:5001"],
-        fontSrc: ["'self'", "https:", "data:"],
+        imgSrc: ["'self'", "data:", "blob:", "*"],
+        connectSrc: ["*"],
+        fontSrc: ["'self'", "https:", "data:", "*"],
         objectSrc: ["'none'"],
         upgradeInsecureRequests: null,
       },
@@ -63,11 +46,12 @@ app.use(
 
 app.use(cors({
   origin: true,
-  methods: ["GET", "POST"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // ----------------------------------------------------
 // RATE LIMITING
@@ -75,15 +59,15 @@ app.use(express.json({ limit: "1mb" }));
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 15,
-  message: { success: false, error: "Too many login/registration attempts. Please try again in 15 minutes." },
+  max: 100,
+  message: { success: false, error: "Too many login/registration attempts. Please try again in a few minutes." },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: 100,
   message: { success: false, error: "AI request rate limit exceeded. Please wait a few minutes before trying again." },
   standardHeaders: true,
   legacyHeaders: false,
@@ -91,7 +75,7 @@ const aiLimiter = rateLimit({
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 1000,
   message: { success: false, error: "Too many requests. Please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
@@ -100,72 +84,38 @@ const generalLimiter = rateLimit({
 app.use("/api/", generalLimiter);
 
 // ----------------------------------------------------
-// SERVERLESS-SAFE FILE UPLOAD CONFIGURATION (Multer)
+// FILE UPLOAD CONFIGURATION (Multer)
 // ----------------------------------------------------
 
-const storage = process.env.VERCEL
-  ? multer.memoryStorage()
-  : multer.diskStorage({
-      destination: (req, file, cb) => {
-        const uploadDir = path.resolve("uploads");
-        if (!fs.existsSync(uploadDir)) {
-          try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) {}
-        }
-        cb(null, uploadDir);
-      },
-      filename: (req, file, cb) => {
-        cb(null, Date.now() + "-" + path.basename(file.originalname));
-      }
-    });
-
-const ALLOWED_MIME_TYPES = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-  "image/bmp",
-  "text/plain",
-  "text/csv",
-  "application/octet-stream"
-]);
-
-const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp", ".txt", ".csv", ""]);
+const uploadDir = path.resolve("uploads");
+if (!fs.existsSync(uploadDir)) {
+  try { fs.mkdirSync(uploadDir, { recursive: true }); } catch (e) {}
+}
 
 const upload = multer({
-  storage,
+  dest: uploadDir,
   limits: {
-    fileSize: 15 * 1024 * 1024,
+    fileSize: 25 * 1024 * 1024, // 25 MB max
     files: 1
   },
   fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const mime = (file.mimetype || "").toLowerCase();
-
-    if (ALLOWED_MIME_TYPES.has(mime) || ALLOWED_EXTENSIONS.has(ext) || mime.startsWith("image/") || mime.startsWith("text/")) {
-      cb(null, true);
-    } else {
-      cb(new Error("Invalid file format. Please upload a PDF or an image (JPG, PNG, WebP, HEIC)."));
-    }
+    // Accept all images, PDFs, text, and binary formats commonly produced by mobile cameras
+    cb(null, true);
   }
 });
 
 // ----------------------------------------------------
-// SECURE API KEYS & JWT SETUP
+// SECURE API KEYS SETUP
 // ----------------------------------------------------
-
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString("hex");
 
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 const googleAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
-console.log("⚡ MedIntel High-Speed Production Backend Initializing...");
-console.log("  - Primary AI Engine (Groq Llama 3.3 70B):", groq ? "Enabled (Sub-1s Speed)" : "Disabled");
-console.log("  - Optional Vision Engine (Gemini AI Studio):", googleAI ? "Enabled" : "Disabled");
+console.log("🚀 MedIntel Production Backend Initializing...");
+console.log("  - Google AI Studio (Gemini 2.5 Flash):", googleAI ? "Enabled" : "Disabled");
+console.log("  - Groq AI SDK (Llama 3.3 70B):", groq ? "Enabled" : "Disabled");
 
-// Serve frontend static assets safely
+// Serve compiled production frontend statically
 const distDir = path.resolve("dist");
 if (fs.existsSync(distDir)) {
   console.log("📦 Serving compiled production frontend from dist/");
@@ -273,7 +223,7 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// ULTRA-FAST MULTI-MODAL AI REPORT ANALYZER ENDPOINT
+// MULTI-MODAL AI REPORT ANALYZER ENDPOINT
 // ----------------------------------------------------
 
 app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
@@ -293,21 +243,15 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     }
 
     const originalName = path.basename(req.file.originalname || "medical_report");
-    console.log("📄 File received:", originalName, "| MimeType:", req.file.mimetype);
-
-    // Read File Buffer (Memory vs Disk)
-    const fileBuffer = req.file.buffer || (filePath ? fs.readFileSync(filePath) : null);
-    if (!fileBuffer) {
-      return res.status(400).json({ success: false, error: "Could not read uploaded file content." });
-    }
-
-    const fileBase64 = fileBuffer.toString("base64");
-    const mimeType = req.file.mimetype || "";
-    const ext = path.extname(originalName).toLowerCase();
+    console.log("📄 File received:", originalName, "| MimeType:", req.file.mimetype, "| Size:", req.file.size);
 
     let extractedText = "";
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileBase64 = fileBuffer.toString("base64");
+    const mimeType = req.file.mimetype || "image/jpeg";
+    const ext = path.extname(originalName).toLowerCase();
 
-    // 1. Extract text from PDF or Plain Text
+    // 1. Extract text from PDF if applicable
     if (mimeType === "application/pdf" || ext === ".pdf") {
       try {
         const parseFunc = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
@@ -320,8 +264,8 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
       extractedText = fileBuffer.toString("utf8");
     }
 
-    // 2. Fallback OCR via Tesseract if available
-    if (!extractedText.trim() && Tesseract && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].includes(ext))) {
+    // 2. OCR via Tesseract if needed
+    if (!extractedText.trim() && (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp"].includes(ext))) {
       try {
         let processedBuffer = fileBuffer;
         if (sharp) {
@@ -417,10 +361,10 @@ Return STRICT JSON matching this exact structure:
 
     let responseText = "";
 
-    // 1. Try Gemini Vision multi-modal path if Gemini Key is available
+    // 1. Try Gemini Vision multi-modal path first
     if (googleAI) {
       try {
-        console.log("⚡ Executing Gemini Multi-Modal Analysis...");
+        console.log("⚡ Executing Gemini 2.5 Flash Vision Analysis...");
         const contentsPayload = [
           {
             inlineData: {
@@ -437,14 +381,14 @@ Return STRICT JSON matching this exact structure:
         });
         responseText = geminiRes.text;
       } catch (gErr) {
-        console.error("⚠️ Gemini API notice, switching to Groq SDK:", gErr.message);
+        console.error("⚠️ Gemini Vision error, falling back to Groq:", gErr.message);
       }
     }
 
-    // 2. Primary Ultra-Fast Groq AI Path (Sub-1s Latency)
+    // 2. Groq AI Fallback Path (Sub-1s Latency)
     if (!responseText && groq) {
       try {
-        console.log("⚡ Executing Groq Llama 3.3 70B AI Analysis (Sub-1s Speed)...");
+        console.log("⚡ Executing Groq Llama 3.3 70B AI Analysis...");
         const groqRes = await groq.chat.completions.create({
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: promptText }],
@@ -542,7 +486,7 @@ INSTRUCTIONS:
 
     let replyText = "";
 
-    // 1. Try Gemini first if key present
+    // 1. Try Gemini first
     if (googleAI) {
       try {
         const geminiChatRes = await googleAI.models.generateContent({
@@ -553,7 +497,7 @@ INSTRUCTIONS:
       } catch (gErr) {}
     }
 
-    // 2. Primary Ultra-Fast Groq AI Path
+    // 2. Groq AI Fallback
     if (!replyText && groq) {
       try {
         const groqChatRes = await groq.chat.completions.create({
@@ -631,11 +575,8 @@ if (fs.existsSync(distDir)) {
   });
 }
 
-export default app;
+const PORT = process.env.PORT || 5001;
 
-if (!process.env.VERCEL) {
-  const PORT = process.env.PORT || 5001;
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 MedIntel High-Speed Production Backend running on port ${PORT}`);
-  });
-}
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 MedIntel Production Backend running on port ${PORT}`);
+});

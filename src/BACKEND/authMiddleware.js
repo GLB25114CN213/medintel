@@ -1,5 +1,7 @@
 import jwt from "jsonwebtoken";
 
+export const JWT_SECRET = process.env.JWT_SECRET || "medintel_secret_key_production_2026";
+
 export const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -9,8 +11,7 @@ export const authenticateToken = (req, res, next) => {
   }
 
   try {
-    const secret = process.env.JWT_SECRET || "medintel_jwt_secret_fallback";
-    const verified = jwt.verify(token, secret);
+    const verified = jwt.verify(token, JWT_SECRET);
     req.user = verified;
     next();
   } catch (err) {
@@ -24,8 +25,7 @@ export const optionalAuthenticateToken = (req, res, next) => {
 
   if (token) {
     try {
-      const secret = process.env.JWT_SECRET || "medintel_jwt_secret_fallback";
-      req.user = jwt.verify(token, secret);
+      req.user = jwt.verify(token, JWT_SECRET);
     } catch (e) {
       // Ignored for optional auth
     }
