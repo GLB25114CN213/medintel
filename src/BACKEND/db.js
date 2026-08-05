@@ -1,10 +1,11 @@
-import sqlite3 from "sqlite3";
 import path from "path";
 import fs from "fs";
 
 let db = null;
 
 try {
+  const sqlite3Module = await import("sqlite3");
+  const sqlite3 = sqlite3Module.default || sqlite3Module;
   const dbPath = process.env.VERCEL ? ":memory:" : path.resolve("medintel.db");
   const sqlite = sqlite3.verbose();
   db = new sqlite.Database(dbPath, (err) => {
@@ -50,7 +51,7 @@ try {
     `);
   });
 } catch (e) {
-  console.error("⚠️ SQLite Initialization Warning:", e.message);
+  console.error("⚠️ SQLite Module Load Notice:", e.message);
 }
 
 export const runQuery = (sql, params = []) => {
