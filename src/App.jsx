@@ -218,23 +218,24 @@ export default function MedIntelAI() {
         return;
       }
 
-      // Clean Patient Info helper
-      const cleanValue = (val, fallback) => {
+      // Clean Patient Info helper (defaults missing fields to 'Not Available')
+      const cleanValue = (val, fallback = "Not Available") => {
         if (!val || typeof val !== 'string') return fallback;
         const trimmed = val.trim();
         if (trimmed.toLowerCase() === 'unspecified' || trimmed.toLowerCase() === 'n/a' || trimmed === '') return fallback;
         return trimmed;
       };
 
-      // Convert API JSON to UI Structure with Rich Clinical Fallbacks
+      // Convert API JSON to UI Structure
       const convertedAnalysis = {
         patientInfo: {
-          name: cleanValue(data.analysis.patientName, "Patient Record"),
-          age: cleanValue(data.analysis.age, "Not Stated"),
-          gender: cleanValue(data.analysis.gender, "Not Stated"),
-          testDate: cleanValue(data.analysis.reportDate, new Date().toLocaleDateString()),
-          facilityName: cleanValue(data.analysis.facilityName, "Clinical Diagnostic Laboratory"),
-          doctorName: cleanValue(data.analysis.doctorName, "Attending Physician"),
+          name: cleanValue(data.analysis.patientName),
+          age: cleanValue(data.analysis.age),
+          gender: cleanValue(data.analysis.gender),
+          patientId: cleanValue(data.analysis.patientId || data.analysis.patientID),
+          testDate: cleanValue(data.analysis.reportDate),
+          facilityName: cleanValue(data.analysis.facilityName),
+          doctorName: cleanValue(data.analysis.doctorName),
         },
 
         healthScore: Number(data.analysis.healthScore) > 0 ? Number(data.analysis.healthScore) : 85,
@@ -243,9 +244,7 @@ export default function MedIntelAI() {
         summaryTechnical: data.analysis.professionalExplanation || "Technical medical evaluation completed.",
         riskLevel: data.analysis.riskLevel || "Low",
 
-        diagnoses: data.analysis.diagnoses && data.analysis.diagnoses.length > 0
-          ? data.analysis.diagnoses
-          : ["Lab Biomarker Evaluation Complete"],
+        diagnoses: data.analysis.diagnoses || [],
         symptoms: data.analysis.symptomsIdentified || [],
 
         alerts: data.analysis.abnormalFindings?.map((a) => ({
@@ -258,7 +257,7 @@ export default function MedIntelAI() {
           name: b.name,
           value: b.value,
           unit: b.unit || "",
-          normalRange: b.normalRange,
+          normalRange: b.normalRange || "Reference Not Provided",
           status: (b.status || "normal").toLowerCase(),
           significance: b.meaning,
           confidence: b.confidence || "High",
@@ -779,7 +778,7 @@ export default function MedIntelAI() {
                 <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-4 flex items-center gap-2">
                   <User className="w-4 h-4" /> Patient & Document Profile
                 </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
                   <div>
                     <span className="text-xs text-slate-400 block">Patient Name</span>
                     <span className="font-bold">{analysisResults.patientInfo.name}</span>
@@ -787,6 +786,14 @@ export default function MedIntelAI() {
                   <div>
                     <span className="text-xs text-slate-400 block">Age / Gender</span>
                     <span className="font-bold">{analysisResults.patientInfo.age} / {analysisResults.patientInfo.gender}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-400 block">Patient ID</span>
+                    <span className="font-bold">{analysisResults.patientInfo.patientId}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-slate-400 block">Report Date</span>
+                    <span className="font-bold">{analysisResults.patientInfo.testDate}</span>
                   </div>
                   <div>
                     <span className="text-xs text-slate-400 block">Facility / Laboratory</span>
@@ -815,7 +822,7 @@ export default function MedIntelAI() {
                   {/* Summary */}
                   <div className="md:col-span-2 space-y-4">
                     <div>
-                      <h4 className="text-base font-bold text-cyan-400 mb-1">Executive Clinical Summary</h4>
+                      <h4 className="text-base font-bold text-cyan-400 mb-1">Easy-to-Understand Clinical Explanation</h4>
                       <p className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
                         {analysisResults.summaryPatientFriendly}
                       </p>
@@ -833,46 +840,67 @@ export default function MedIntelAI() {
                 </div>
               </div>
 
-              {/* 3. DIAGNOSES & IDENTIFIED SYMPTOMS */}
-              {(analysisResults.diagnoses?.length > 0 || analysisResults.symptoms?.length > 0) && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {analysisResults.diagnoses?.length > 0 && (
-                    <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-rose-400 mb-3 flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4" /> Clinical Diagnoses & Key Findings
-                      </h3>
-                      <div className="flex flex-wrap gap-2">
-                        {analysisResults.diagnoses.map((d, i) => (
-                          <span key={i} className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+              {/* 3. DIAGNOSES & KEY FINDINGS */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-cyan-400 mb-3 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" /> Clinical Diagnoses & Key Findings
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {analysisResults.diagnoses && analysisResults.diagnoses.length > 0 ? (
+                      analysisResults.diagnoses.map((d, i) => {
+                        const isNormalText = d.toLowerCase().includes('complete') || d.toLowerCase().includes('normal') || d.toLowerCase().includes('evaluation');
+                        return (
+                          <span
+                            key={i}
+                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border ${
+                              isNormalText
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                            }`}
+                          >
                             {d}
                           </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {analysisResults.symptoms?.length > 0 && (
-                    <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-amber-400 mb-3 flex items-center gap-2">
-                        <Activity className="w-4 h-4" /> Symptoms Identified
-                      </h3>
-                      <div className="flex flex-wrap gap-2">
-                        {analysisResults.symptoms.map((s, i) => (
-                          <span key={i} className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {s}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                        );
+                      })
+                    ) : (
+                      <span className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        All Biomarkers Within Normal Reference Ranges
+                      </span>
+                    )}
+                  </div>
                 </div>
-              )}
+
+                {analysisResults.symptoms?.length > 0 ? (
+                  <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-amber-400 mb-3 flex items-center gap-2">
+                      <Activity className="w-4 h-4" /> Symptoms Identified
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {analysisResults.symptoms.map((s, i) => (
+                        <span key={i} className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                    <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-400 mb-3 flex items-center gap-2">
+                      <Activity className="w-4 h-4" /> Report Health Status
+                    </h3>
+                    <span className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      No Acute Physical Symptoms Reported
+                    </span>
+                  </div>
+                )}
+              </div>
 
               {/* 4. ABNORMAL BIOMARKERS ALERT BANNER */}
-              {analysisResults.alerts?.length > 0 && (
+              {analysisResults.alerts?.length > 0 ? (
                 <div className={`p-6 rounded-3xl border ${darkMode ? 'bg-amber-950/30 border-amber-800/50' : 'bg-amber-50 border-amber-200'}`}>
                   <h3 className="text-sm font-bold text-amber-400 flex items-center gap-2 mb-3 uppercase tracking-wide">
-                    <AlertCircle className="w-5 h-5" /> Abnormal Lab Alerts ({analysisResults.alerts.length})
+                    <AlertCircle className="w-5 h-5" /> Key Abnormal Findings ({analysisResults.alerts.length})
                   </h3>
                   <div className="flex flex-wrap gap-2">
                     {analysisResults.alerts.map((a, i) => (
@@ -882,47 +910,61 @@ export default function MedIntelAI() {
                     ))}
                   </div>
                 </div>
+              ) : (
+                <div className={`p-5 rounded-3xl border ${darkMode ? 'bg-emerald-950/20 border-emerald-800/40' : 'bg-emerald-50 border-emerald-200'}`}>
+                  <h3 className="text-xs font-bold text-emerald-400 flex items-center gap-2 uppercase tracking-wide">
+                    <CheckCircle className="w-4 h-4" /> Key Findings Notice: All Lab Values Are Within Expected Reference Ranges
+                  </h3>
+                </div>
               )}
 
-              {/* 5. COMPLETE BIOMARKERS & LAB RESULTS GRID */}
+              {/* 5. COMPLETE BIOMARKERS & LAB RESULTS GRID (REFERENCE RANGE COMPARISON) */}
               {analysisResults.biomarkers?.length > 0 && (
                 <div className={`p-8 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                  <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-                    <Activity className="w-6 h-6 text-cyan-400" /> Biomarkers & Quantitative Lab Values
-                  </h3>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                      <Activity className="w-6 h-6 text-cyan-400" /> Test Summary & Reference Range Comparison
+                    </h3>
+                    <span className="text-xs text-slate-400 font-semibold">
+                      Color-Coded Status Labels Enabled
+                    </span>
+                  </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {analysisResults.biomarkers.map((bm, i) => (
-                      <div
-                        key={i}
-                        className={`p-5 rounded-2xl border transition-all ${
-                          bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
-                            ? darkMode ? 'bg-amber-950/20 border-amber-500/30' : 'bg-amber-50 border-amber-200'
-                            : darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-bold text-sm">{bm.name}</span>
-                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
-                            bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal'
-                              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                              : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                          }`}>
-                            {bm.status}
-                          </span>
+                    {analysisResults.biomarkers.map((bm, i) => {
+                      const isAbnormal = bm.status === 'high' || bm.status === 'low' || bm.status === 'abnormal' || bm.status === 'critical';
+                      return (
+                        <div
+                          key={i}
+                          className={`p-5 rounded-2xl border transition-all ${
+                            isAbnormal
+                              ? darkMode ? 'bg-amber-950/20 border-amber-500/30' : 'bg-amber-50 border-amber-200'
+                              : darkMode ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-bold text-sm">{bm.name}</span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
+                              isAbnormal
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            }`}>
+                              {bm.status}
+                            </span>
+                          </div>
+                          <div className="flex items-baseline gap-2 mb-2">
+                            <span className={`text-2xl font-black ${isAbnormal ? 'text-amber-400' : 'text-cyan-400'}`}>{bm.value}</span>
+                            <span className="text-xs text-slate-400">{bm.unit}</span>
+                            <span className="text-xs text-slate-500 ml-auto">Normal Range: {bm.normalRange}</span>
+                          </div>
+                          {bm.significance && (
+                            <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                              {bm.significance}
+                            </p>
+                          )}
                         </div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                          <span className="text-2xl font-black text-cyan-400">{bm.value}</span>
-                          <span className="text-xs text-slate-400">{bm.unit}</span>
-                          <span className="text-xs text-slate-500 ml-auto">Normal Range: {bm.normalRange}</span>
-                        </div>
-                        {bm.significance && (
-                          <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                            {bm.significance}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
