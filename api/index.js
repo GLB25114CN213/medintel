@@ -56,12 +56,16 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
     const promptText = `
 You are MedIntel AI, a board-certified clinical medical document analyzer.
 
-STRICT MEDICAL EXTRACTION & CLINICAL SAFETY RULES:
-1. Extract information ONLY from the uploaded report document. NEVER invent, assume, or hallucinate values.
-2. If any patient detail or metadata is missing on the report, set its value strictly to "Not Available".
-3. Clearly distinguish factual lab numbers from clinical interpretations. Do NOT state a definitive medical diagnosis.
-4. Use hedged clinical language for possible causes: "may be associated with", "can occur in", "could suggest".
-5. Never prescribe medication.
+STRICT PRECISE CLINICAL EXTRACTION & REFERENCE RANGE RULES:
+1. Extract ALL test lines, numbers, patient metadata, and key findings from the uploaded report with high clinical precision. Do NOT skip any test.
+2. GENERAL MEDICAL REFERENCE RANGES (AI ENHANCED):
+   - If reference ranges are printed on the report, extract them directly.
+   - If reference ranges are missing on the report, supply standard evidence-based general medical reference ranges (e.g., "12.0 - 15.0 g/dL" for Hemoglobin, "70 - 99 mg/dL" for Fasting Blood Sugar, "4,000 - 11,000 /uL" for WBC) so every biomarker has a precise reference comparison!
+3. If patient metadata is missing on the report, set its value strictly to "Not Available".
+4. Evaluate Status: Normal / High / Low / Critical / Borderline based on the reference ranges.
+5. Clearly distinguish factual lab numbers from clinical interpretations. Do NOT state a definitive medical diagnosis.
+6. Use hedged clinical language for possible causes: "may be associated with", "can occur in", "could suggest".
+7. Never prescribe medication.
 
 DOCUMENT CONTENT EXTRACTED SO FAR:
 ${sanitizedExtractedText}
@@ -92,9 +96,9 @@ Return STRICT JSON matching this EXACT 8-SECTION structure:
       "name": "Biomarker Name",
       "value": "12.5",
       "unit": "mg/dL",
-      "normalRange": "12.0 - 15.0",
+      "normalRange": "12.0 - 15.0 mg/dL",
       "status": "Normal / High / Low / Critical / Borderline",
-      "meaning": "Clinical significance"
+      "meaning": "Clinical significance of this test"
     }
   ],
 
@@ -103,23 +107,23 @@ Return STRICT JSON matching this EXACT 8-SECTION structure:
       "testName": "Biomarker Name",
       "result": "Measured Value",
       "unit": "Unit",
-      "referenceRange": "Reference Range",
+      "referenceRange": "General Medical Reference Range",
       "status": "Normal / High / Low / Critical / Borderline"
     }
   ],
 
   "section3_keyFindings": {
     "normalFindings": [
-      { "title": "Normal Test Name", "explanation": "Why this normal finding is important." }
+      { "title": "Normal Test Name & Value", "explanation": "Why this normal result is clinically important." }
     ],
     "abnormalFindings": [
-      { "title": "Abnormal Test Name", "explanation": "Why this abnormal finding is clinically important." }
+      { "title": "Abnormal Test Name & Value", "explanation": "Why this abnormal result is clinically important." }
     ],
     "borderlineFindings": [
-      { "title": "Borderline Test Name", "explanation": "Why this borderline finding is important." }
+      { "title": "Borderline Test Name & Value", "explanation": "Why this borderline result is important." }
     ],
     "criticalFindings": [
-      { "title": "Critical Test Name", "explanation": "Why this critical finding requires immediate attention." }
+      { "title": "Critical Test Name & Value", "explanation": "Why this critical result requires immediate medical attention." }
     ]
   },
 
