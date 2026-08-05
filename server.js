@@ -265,15 +265,16 @@ app.post(
       console.log(`\n📄 [analyze] file=${originalName} | size=${req.file.size}B | mime=${mimeType}`);
 
       let rawBuffer = fs.readFileSync(filePath);
-      let ocrText = "";
+      let ocrText = (req.body?.clientOcrText || "").trim();
 
       // ── PDF Text Extraction ──────────────────────────────────────
       if (isPDF) {
         try {
           const parseFn = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
           const pdfData = await parseFn(rawBuffer);
-          ocrText = (pdfData.text || "").trim();
-          if (ocrText) console.log(`   ✅ PDF text extracted: ${ocrText.length} chars`);
+          const pdfText = (pdfData.text || "").trim();
+          ocrText = ocrText ? `${ocrText}\n\n${pdfText}` : pdfText;
+          if (pdfText) console.log(`   ✅ PDF text extracted: ${pdfText.length} chars`);
         } catch (pdfErr) {
           console.error("   ⚠️ PDF parse failed:", pdfErr.message);
         }

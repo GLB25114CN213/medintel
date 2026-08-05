@@ -132,12 +132,14 @@ app.post("/analyze", (req, res) => {
       const isImage = IMAGE_EXTS.includes(ext) || mimeType.startsWith("image/");
       const isPDF   = mimeType === "application/pdf" || ext === ".pdf";
 
-      let extractedText = "";
+      let extractedText = (req.body?.clientOcrText || "").trim();
+
       if (isPDF) {
         try {
           const pdfParse = (await import("pdf-parse")).default;
           const pdfData  = await pdfParse(rawBuffer);
-          extractedText  = (pdfData.text || "").trim();
+          const pdfText  = (pdfData.text || "").trim();
+          extractedText  = extractedText ? `${extractedText}\n\n${pdfText}` : pdfText;
         } catch (e) {
           console.error("PDF error:", e.message);
         }

@@ -181,8 +181,24 @@ export default function MedIntelAI() {
     setLoading(true);
 
     try {
+      const file = reports[0].file;
       const formData = new FormData();
-      formData.append("file", reports[0].file);
+      formData.append("file", file);
+
+      // Client-side OCR for image files (solves Vercel serverless limitations)
+      if (file.type.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp", ".heic"].some(ext => file.name.toLowerCase().endsWith(ext))) {
+        try {
+          const Tesseract = (await import("tesseract.js")).default;
+          const ocrResult = await Tesseract.recognize(file, "eng", { logger: () => {} });
+          const extractedText = (ocrResult.data?.text || "").trim();
+          if (extractedText) {
+            formData.append("clientOcrText", extractedText);
+            console.log("✅ Client-side OCR extracted:", extractedText.length, "chars");
+          }
+        } catch (ocrErr) {
+          console.warn("Client-side OCR warning:", ocrErr.message);
+        }
+      }
 
       const headers = {};
       if (token) {
