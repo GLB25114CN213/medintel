@@ -295,68 +295,73 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     const sanitizedExtractedText = extractedText.substring(0, 8000);
 
     const promptText = `
-You are MedIntel AI, a board-certified clinical medical document analyzer.
+You are MedIntel AI, an expert clinical medical report analyzer.
 
-CRITICAL INSTRUCTIONS FOR ACCURATE MEDICAL REPORT EXTRACTION:
-1. Carefully inspect every word, number, lab result, biomarker, unit, reference range, prescription, and medical diagnosis in the attached document.
-2. EXTRACT ONLY ACTUAL VALUES PRESENT IN THE DOCUMENT:
-   - Extract exact patient name, age, gender, report date, lab/facility name, and attending doctor name if shown.
-   - Extract exact lab biomarker test names, measured numerical values, units (e.g. mg/dL, g/dL, U/L), normal reference ranges, and high/low/normal status.
-   - Extract exact prescribed medications, dosage (e.g. 500mg), frequency, duration, and instructions.
-   - Extract exact clinical diagnoses, radiology/ultrasound/CT observations, and doctor recommendations.
-3. DO NOT return placeholder text like "Patient Name or Unspecified", "12.5 mg/dL", or sample values unless those EXACT values appear in the uploaded report.
-4. Calculate an objective Health Score (1 to 100) based strictly on the severity and count of abnormal biomarkers and clinical diagnoses found in the report.
+INSTRUCTIONS FOR PATIENT DETAILS & ALL CLINICAL FINDINGS EXTRACTION:
+1. READ & EXTRACT ALL PATIENT HEADER DETAILS DIRECTLY FROM THE DOCUMENT:
+   - "patientName": Extract the exact patient name printed on the report (e.g. "Rahul Sharma"). If absent, return "".
+   - "age": Extract the exact age printed (e.g. "34 Y" or "34"). If absent, return "".
+   - "gender": Extract the exact gender printed (e.g. "Male" or "Female"). If absent, return "".
+   - "reportDate": Extract the exact test/report collection date printed. If absent, return "".
+   - "facilityName": Extract the exact hospital/laboratory/clinic name printed at top. If absent, return "".
+   - "doctorName": Extract the exact attending/referring doctor name printed. If absent, return "".
 
-DOCUMENT CONTENT EXTRACTED SO FAR:
-${sanitizedExtractedText}
+2. READ & EXTRACT ALL CLINICAL FINDINGS, BIOMARKERS, LAB TEST PANELS, & MEDICATIONS:
+   - Extract ALL biomarker test names, measured numerical values, units, reference ranges, and abnormal status.
+   - Extract ALL radiology / ultrasound / CT / X-ray findings.
+   - Extract ALL prescribed medications with dose, frequency, duration, and instructions.
+   - Extract ALL clinical diagnoses and impression statements.
 
-Return STRICT JSON matching this structure:
+Return STRICT JSON matching this exact structure:
 {
   "isMedicalReport": true,
-  "patientName": "Actual Patient Name or Unspecified",
-  "age": "Actual Age or Unspecified",
-  "gender": "Actual Gender or Unspecified",
-  "reportDate": "Actual Date or Unspecified",
-  "facilityName": "Actual Facility/Lab Name or Unspecified",
-  "doctorName": "Actual Doctor Name or Unspecified",
+  "patientName": "Extracted Patient Name",
+  "age": "34",
+  "gender": "Male",
+  "reportDate": "04-Aug-2026",
+  "facilityName": "Extracted Lab Name",
+  "doctorName": "Extracted Doctor Name",
   "healthScore": 82,
-  "healthScoreReason": "Clinical justification based strictly on report findings.",
-  "riskLevel": "Low / Moderate / High / Critical",
-  "summary": "Comprehensive clinical summary of all medical findings in this report.",
-  "simpleExplanation": "Easy to understand patient-friendly explanation of the report.",
+  "healthScoreReason": "Clinical justification based on findings.",
+  "riskLevel": "Low / Moderate / High",
+  "summary": "Clinical summary of all report findings.",
+  "simpleExplanation": "Clear patient-friendly explanation.",
   "professionalExplanation": "Detailed technical clinical medical evaluation.",
-  "diagnoses": ["Actual Diagnosis 1"],
-  "symptomsIdentified": ["Actual Symptom 1"],
+  "diagnoses": ["Extracted Diagnosis 1"],
+  "symptomsIdentified": ["Identified Symptom"],
   "abnormalFindings": [
-    { "name": "Actual Abnormal Test Name", "value": "Measured Value", "severity": "Moderate / High / Critical" }
+    { "name": "Abnormal Biomarker Name", "value": "Measured Value", "severity": "Moderate / High" }
   ],
   "biomarkers": [
     {
-      "name": "Actual Test Name",
-      "value": "Measured Value",
-      "unit": "Unit",
-      "status": "Normal / High / Low / Critical",
-      "normalRange": "Reference Range",
-      "meaning": "Clinical significance of this metric",
+      "name": "Biomarker Name",
+      "value": "12.5",
+      "unit": "mg/dL",
+      "status": "Normal / High / Low",
+      "normalRange": "12.0 - 15.0",
+      "meaning": "Clinical meaning",
       "confidence": "High"
     }
   ],
   "medicines": [
     {
-      "name": "Actual Medicine Name",
-      "dose": "Dose",
-      "frequency": "Frequency",
-      "duration": "Duration",
+      "name": "Medicine Name",
+      "dose": "500mg",
+      "frequency": "Daily",
+      "duration": "7 days",
       "purpose": "Purpose",
-      "instructions": "Instructions",
+      "instructions": "Take after meals",
       "confidence": "High"
     }
   ],
-  "radiologyFindings": ["Actual Radiology/Scan Observations"],
-  "recommendations": ["Clinical Recommendation 1"],
+  "radiologyFindings": ["Radiology/Scan Observation"],
+  "recommendations": ["Clinical Recommendation"],
   "lifestyleRecommendations": ["Lifestyle Guidance"],
   "dietRecommendations": ["Dietary Advice"],
-  "doctorQuestions": ["Important Question to Ask Doctor"],
+  "foodsToAvoid": ["Foods to avoid"],
+  "supplementRecommendations": ["Supplements"],
+  "followUpTests": ["Follow-up Test"],
+  "doctorQuestions": ["Question to Ask Doctor"],
   "doctorSuggestion": "Recommended Medical Specialist",
   "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified medical doctor."
 }
