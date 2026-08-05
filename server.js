@@ -53,6 +53,13 @@ app.use(cors({
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Serve compiled production frontend statically
+const distDir = path.resolve("dist");
+if (fs.existsSync(distDir)) {
+  console.log("📦 Serving compiled production frontend from dist/");
+  app.use(express.static(distDir));
+}
+
 // ----------------------------------------------------
 // RATE LIMITING
 // ----------------------------------------------------
@@ -99,7 +106,6 @@ const upload = multer({
     files: 1
   },
   fileFilter: (req, file, cb) => {
-    // Accept all images, PDFs, text, and binary formats commonly produced by mobile cameras
     cb(null, true);
   }
 });
@@ -114,13 +120,6 @@ const googleAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.
 console.log("🚀 MedIntel Production Backend Initializing...");
 console.log("  - Google AI Studio (Gemini 2.5 Flash):", googleAI ? "Enabled" : "Disabled");
 console.log("  - Groq AI SDK (Llama 3.3 70B):", groq ? "Enabled" : "Disabled");
-
-// Serve compiled production frontend statically
-const distDir = path.resolve("dist");
-if (fs.existsSync(distDir)) {
-  console.log("📦 Serving compiled production frontend from dist/");
-  app.use(express.static(distDir));
-}
 
 // Input Validation Helpers
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -290,17 +289,9 @@ app.post("/analyze", aiLimiter, optionalAuthenticateToken, (req, res, next) => {
     const sanitizedExtractedText = extractedText.substring(0, 8000);
 
     const promptText = `
-You are MedIntel AI, an expert OCR, handwriting analysis, and comprehensive medical report assistant.
+You are MedIntel AI, an expert clinical medical report assistant.
 
-TASK INSTRUCTIONS FOR MEDICAL REPORTS & PRESCRIPTIONS:
-1. Carefully inspect every part of the text and findings before responding.
-2. Read handwritten doctor notes, scribbled prescriptions, lab values, biomarkers, and clinical diagnoses accurately.
-3. If a word or value is unclear:
-   - Infer it only when strong contextual evidence exists: [likely: word].
-   - If text cannot be determined confidently: [unclear]. Do NOT invent words.
-4. Extract ALL sections of medical findings from this document.
-
-DOCUMENT CONTENT:
+Analyze this medical document content accurately:
 ${sanitizedExtractedText}
 
 Return STRICT JSON matching this exact structure:
@@ -311,15 +302,15 @@ Return STRICT JSON matching this exact structure:
   "gender": "Male / Female / Unspecified",
   "reportDate": "Report date or Unspecified",
   "facilityName": "Hospital / Laboratory Name",
-  "doctorName": "Doctor / Physician Name",
+  "doctorName": "Attending Physician",
   "healthScore": 75,
-  "healthScoreReason": "Detailed explanation for health score based on biomarkers and clinical findings.",
+  "healthScoreReason": "Health score evaluated from biomarkers and findings.",
   "riskLevel": "Moderate",
-  "summary": "Clinical summary of the patient report.",
+  "summary": "Clinical summary of findings.",
   "simpleExplanation": "Easy to understand patient-friendly explanation.",
-  "professionalExplanation": "Detailed technical medical analysis.",
-  "diagnoses": ["Primary Diagnosis", "Secondary Finding"],
-  "symptomsIdentified": ["Symptom 1", "Symptom 2"],
+  "professionalExplanation": "Technical clinical evaluation.",
+  "diagnoses": ["Primary Diagnosis"],
+  "symptomsIdentified": ["Identified Symptom"],
   "abnormalFindings": [
     { "name": "Biomarker Name", "value": "Abnormal Value", "severity": "High" }
   ],
@@ -338,24 +329,20 @@ Return STRICT JSON matching this exact structure:
     {
       "name": "Medicine Name",
       "dose": "500mg",
-      "frequency": "Once daily",
+      "frequency": "Daily",
       "duration": "7 days",
-      "purpose": "Purpose of medication",
+      "purpose": "Purpose",
       "instructions": "Take after meals",
       "confidence": "High"
     }
   ],
   "radiologyFindings": ["X-Ray / CT / Ultrasound observation if present"],
   "recommendations": ["Recommendation 1"],
-  "lifestyleRecommendations": ["Lifestyle advice 1"],
-  "dietRecommendations": ["Nutrition advice 1"],
-  "foodsToAvoid": ["Foods to avoid 1"],
-  "supplementRecommendations": ["Vitamin D3 60,000 IU"],
-  "followUpTests": ["Follow up lab test 1"],
-  "doctorQuestions": ["Question for doctor 1"],
-  "doctorSuggestion": "General Physician / Medical Specialist",
-  "imageQualityNotes": "Legibility assessment summary: Document text clarity and findings summary.",
-  "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified medical doctor."
+  "lifestyleRecommendations": ["Lifestyle advice"],
+  "dietRecommendations": ["Nutrition advice"],
+  "doctorQuestions": ["Question for doctor"],
+  "doctorSuggestion": "General Physician",
+  "disclaimer": "This AI analysis is for educational purposes only. Consult a doctor."
 }
 `;
 
@@ -565,15 +552,20 @@ app.get("/api/chat/history", authenticateToken, async (req, res) => {
   }
 });
 
-// SPA Fallback Route
-if (fs.existsSync(distDir)) {
-  app.use((req, res, next) => {
-    if (req.method === "GET" && !req.path.startsWith("/api") && req.path !== "/analyze") {
-      return res.sendFile(path.join(distDir, "index.html"));
-    }
-    next();
-  });
-}
+// ----------------------------------------------------
+// SPA CATCH-ALL ROUTE FOR RENDER & PRODUCTION SERVERS
+// ----------------------------------------------------
+
+app.get("*", (req, res, next) => {
+  if (req.path.startsWith("/api") || req.path === "/analyze") {
+    return next();
+  }
+  const indexPath = path.resolve("dist", "index.html");
+  if (fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+  res.status(404).send("MedIntel AI Frontend Build Not Found. Please ensure npm run build was executed.");
+});
 
 const PORT = process.env.PORT || 5001;
 
