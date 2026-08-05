@@ -351,21 +351,27 @@ app.post(
         }
       }
 
-      // ── 2. Groq Llama 3.3 70B (Primary / Fallback Engine) ─────────
+      // ── 2. Groq Llama (Primary / Fallback Engine with Model Redundancy) ──
       if (!responseText && groq) {
-        try {
-          console.log("   ⚡ Calling Groq Llama 3.3 70B...");
-          const groqRes = await groq.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: [{ role: "user", content: promptText }],
-            response_format: { type: "json_object" },
-            max_tokens: 4096,
-            temperature: 0.1,
-          });
-          responseText = groqRes.choices[0]?.message?.content || "";
-          if (responseText) console.log("   ✅ Groq Llama 3.3 success!");
-        } catch (groqErr) {
-          console.error("   ❌ Groq error:", groqErr.message);
+        const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+        for (const modelName of groqModels) {
+          try {
+            console.log(`   ⚡ Calling Groq (${modelName})...`);
+            const groqRes = await groq.chat.completions.create({
+              model: modelName,
+              messages: [{ role: "user", content: promptText }],
+              response_format: { type: "json_object" },
+              max_tokens: 4096,
+              temperature: 0.1,
+            });
+            responseText = groqRes.choices[0]?.message?.content || "";
+            if (responseText) {
+              console.log(`   ✅ Groq ${modelName} success!`);
+              break;
+            }
+          } catch (groqErr) {
+            console.error(`   ⚠️ Groq ${modelName} rate limited/error:`, groqErr.message);
+          }
         }
       }
 
@@ -447,17 +453,21 @@ PATIENT REPORT CONTEXT:
 
     let reply = "";
     if (groq) {
-      try {
-        const r = await groq.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...safeMessages.map(m => ({ role: m.role, content: m.content })),
-          ],
-        });
-        reply = r.choices[0]?.message?.content || "";
-      } catch (e) {
-        console.error("Groq chat error:", e.message);
+      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      for (const modelName of groqModels) {
+        try {
+          const r = await groq.chat.completions.create({
+            model: modelName,
+            messages: [
+              { role: "system", content: systemPrompt },
+              ...safeMessages.map(m => ({ role: m.role, content: m.content })),
+            ],
+          });
+          reply = r.choices[0]?.message?.content || "";
+          if (reply) break;
+        } catch (e) {
+          console.error(`Groq chat error (${modelName}):`, e.message);
+        }
       }
     }
 

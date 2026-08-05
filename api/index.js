@@ -171,20 +171,28 @@ app.post("/analyze", (req, res) => {
         }
       }
 
-      // 2. Groq Fallback
+      // 2. Groq Fallback with Multi-Model Redundancy
       if (!responseText && groq) {
-        try {
-          const r = await groq.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: [{ role: "user", content: promptText }],
-            response_format: { type: "json_object" },
-            max_tokens: 4096,
-            temperature: 0.1,
-          });
-          responseText = r.choices[0]?.message?.content || "";
-        } catch (e) {
-          console.error("Vercel Groq error:", e.message);
-          lastError = lastError ? `${lastError} | Groq: ${e.message}` : `Groq: ${e.message}`;
+        const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+        for (const modelName of groqModels) {
+          try {
+            console.log(`Trying Groq model: ${modelName}...`);
+            const r = await groq.chat.completions.create({
+              model: modelName,
+              messages: [{ role: "user", content: promptText }],
+              response_format: { type: "json_object" },
+              max_tokens: 4096,
+              temperature: 0.1,
+            });
+            responseText = r.choices[0]?.message?.content || "";
+            if (responseText) {
+              console.log(`✅ Groq success with ${modelName}`);
+              break;
+            }
+          } catch (e) {
+            console.error(`Vercel Groq error (${modelName}):`, e.message);
+            lastError = `Groq (${modelName}): ${e.message}`;
+          }
         }
       }
 
