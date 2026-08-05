@@ -54,81 +54,113 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
     const sanitizedExtractedText = extractedText.substring(0, 8000);
 
     const promptText = `
-You are MedIntel AI, an expert clinical medical report analyzer.
+You are MedIntel AI, a board-certified clinical medical document analyzer.
 
-INSTRUCTIONS FOR PATIENT DETAILS & ALL CLINICAL FINDINGS EXTRACTION:
-1. READ & EXTRACT ALL PATIENT HEADER DETAILS DIRECTLY FROM THE DOCUMENT:
-   - "patientName": Extract the exact patient name printed on the report (e.g. "Rahul Sharma"). If absent, return "".
-   - "age": Extract the exact age printed (e.g. "34 Y" or "34"). If absent, return "".
-   - "gender": Extract the exact gender printed (e.g. "Male" or "Female"). If absent, return "".
-   - "reportDate": Extract the exact test/report collection date printed. If absent, return "".
-   - "facilityName": Extract the exact hospital/laboratory/clinic name printed at top. If absent, return "".
-   - "doctorName": Extract the exact attending/referring doctor name printed. If absent, return "".
+STRICT MEDICAL EXTRACTION & CLINICAL SAFETY RULES:
+1. Extract information ONLY from the uploaded report document. NEVER invent, assume, or hallucinate values.
+2. If any patient detail or metadata is missing on the report, set its value strictly to "Not Available".
+3. Clearly distinguish factual lab numbers from clinical interpretations. Do NOT state a definitive medical diagnosis.
+4. Use hedged clinical language for possible causes: "may be associated with", "can occur in", "could suggest".
+5. Never prescribe medication.
 
-2. READ & EXTRACT ALL CLINICAL FINDINGS, BIOMARKERS, LAB TEST PANELS, & MEDICATIONS:
-   - Extract ALL biomarker test names, measured numerical values, units, reference ranges, and abnormal status.
-   - Extract ALL radiology / ultrasound / CT / X-ray findings.
-   - Extract ALL prescribed medications with dose, frequency, duration, and instructions.
-   - Extract ALL clinical diagnoses and impression statements.
+DOCUMENT CONTENT EXTRACTED SO FAR:
+${sanitizedExtractedText}
 
-Return STRICT JSON matching this exact structure:
+Return STRICT JSON matching this EXACT 8-SECTION structure:
 {
   "isMedicalReport": true,
-  "patientName": "Extracted Patient Name",
-  "age": "34",
-  "gender": "Male",
-  "reportDate": "04-Aug-2026",
-  "facilityName": "Extracted Lab Name",
-  "doctorName": "Extracted Doctor Name",
-  "healthScore": 82,
-  "healthScoreReason": "Clinical justification based on findings.",
-  "riskLevel": "Low / Moderate / High",
-  "summary": "Clinical summary of all report findings.",
-  "simpleExplanation": "Clear patient-friendly explanation.",
-  "professionalExplanation": "Detailed technical clinical medical evaluation.",
-  "diagnoses": ["Extracted Diagnosis 1"],
-  "symptomsIdentified": ["Identified Symptom"],
-  "abnormalFindings": [
-    { "name": "Abnormal Biomarker Name", "value": "Measured Value", "severity": "Moderate / High" }
-  ],
+  "patientName": "Extracted Patient Name or Not Available",
+  "age": "Age or Not Available",
+  "gender": "Gender or Not Available",
+  "patientId": "Patient ID or Not Available",
+  "reportDate": "Report Date or Not Available",
+  "facilityName": "Doctor / Lab Name or Not Available",
+  "testType": "Test Panel Type or Not Available",
+
+  "section1_patientInformation": {
+    "name": "Patient Name or Not Available",
+    "age": "Age or Not Available",
+    "gender": "Gender or Not Available",
+    "patientId": "Patient ID or Not Available",
+    "reportDate": "Report Date or Not Available",
+    "facilityName": "Doctor / Lab Name or Not Available",
+    "testType": "Test Panel Type or Not Available"
+  },
+
   "biomarkers": [
     {
       "name": "Biomarker Name",
       "value": "12.5",
       "unit": "mg/dL",
-      "status": "Normal / High / Low",
       "normalRange": "12.0 - 15.0",
-      "meaning": "Clinical meaning",
-      "confidence": "High"
+      "status": "Normal / High / Low / Critical / Borderline",
+      "meaning": "Clinical significance"
     }
   ],
-  "medicines": [
+
+  "section2_testSummaryTable": [
     {
-      "name": "Medicine Name",
-      "dose": "500mg",
-      "frequency": "Daily",
-      "duration": "7 days",
-      "purpose": "Purpose",
-      "instructions": "Take after meals",
-      "confidence": "High"
+      "testName": "Biomarker Name",
+      "result": "Measured Value",
+      "unit": "Unit",
+      "referenceRange": "Reference Range",
+      "status": "Normal / High / Low / Critical / Borderline"
     }
   ],
-  "radiologyFindings": ["Radiology/Scan Observation"],
-  "recommendations": ["Clinical Recommendation"],
-  "lifestyleRecommendations": ["Lifestyle Guidance"],
-  "dietRecommendations": ["Dietary Advice"],
-  "foodsToAvoid": ["Foods to avoid"],
-  "supplementRecommendations": ["Supplements"],
-  "followUpTests": ["Follow-up Test"],
-  "doctorQuestions": ["Question to Ask Doctor"],
-  "doctorSuggestion": "Recommended Medical Specialist",
+
+  "section3_keyFindings": {
+    "normalFindings": [
+      { "title": "Normal Test Name", "explanation": "Why this normal finding is important." }
+    ],
+    "abnormalFindings": [
+      { "title": "Abnormal Test Name", "explanation": "Why this abnormal finding is clinically important." }
+    ],
+    "borderlineFindings": [
+      { "title": "Borderline Test Name", "explanation": "Why this borderline finding is important." }
+    ],
+    "criticalFindings": [
+      { "title": "Critical Test Name", "explanation": "Why this critical finding requires immediate attention." }
+    ]
+  },
+
+  "section4_overallAssessment": {
+    "summary": "Balanced clinical summary describing whether the report appears generally normal or contains abnormalities, its likely clinical significance, avoiding alarming language, and mentioning uncertainty where appropriate.",
+    "healthScore": 85,
+    "riskLevel": "Low / Moderate / High"
+  },
+
+  "section5_possibleCauses": [
+    {
+      "abnormalValue": "Abnormal Test Name & Value",
+      "causes": [
+        "Primary common cause (may be associated with...)",
+        "Secondary cause (can occur in...)",
+        "Less common cause (could suggest...)"
+      ]
+    }
+  ],
+
+  "section6_recommendedFollowUp": {
+    "repeatTesting": "Suggested repeat testing timeframe or Not Needed",
+    "additionalInvestigations": ["Suggested additional laboratory test or panel"],
+    "lifestyleMeasures": ["Evidence-based lifestyle adjustment"],
+    "specialistConsultation": "Recommended medical specialist to consult"
+  },
+
+  "section7_easyExplanation": "Simple, patient-friendly explanation written as if speaking to someone with no medical background.",
+
+  "section8_confidenceScore": {
+    "percentage": 95,
+    "reasoning": "Confidence percentage based strictly on the quality, legibility, and completeness of the report."
+  },
+
   "disclaimer": "This AI analysis is for educational purposes only. Consult a qualified medical doctor."
 }
 `;
 
     let responseText = "";
 
-    // 1. Try Gemini 2.5 Flash Multi-Modal Vision Analysis (Reads patient header & findings from image/PDF Base64)
+    // 1. Gemini Vision Analysis
     if (googleAI) {
       try {
         const contentsPayload = [
