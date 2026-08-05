@@ -429,7 +429,7 @@ app.post(
           const base64Image = processedBuffer.toString("base64");
 
           const geminiRes = await googleAI.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: "gemini-2.0-flash",
             contents: [
               {
                 role: "user",
@@ -468,7 +468,7 @@ app.post(
         try {
           console.log("   ⚡ Calling Gemini 2.5 Flash (text, PDF OCR mode)...");
           const geminiRes = await googleAI.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: "gemini-2.0-flash",
             contents: [{ role: "user", parts: [{ text: promptText }] }],
             config: {
               generationConfig: { responseMimeType: "application/json" },
@@ -615,7 +615,7 @@ RULES:
     if (googleAI) {
       try {
         const r = await googleAI.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-2.0-flash",
           contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
         });
         reply = r.text || "";

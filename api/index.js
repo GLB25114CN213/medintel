@@ -209,7 +209,7 @@ app.post("/analyze", upload.single("file"), async (req, res) => {
           : [{ text: promptText }];
 
         const geminiRes = await googleAI.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-2.0-flash",
           contents: [{ role: "user", parts }],
           config: { generationConfig: { responseMimeType: "application/json" } },
         });
@@ -296,7 +296,7 @@ PATIENT REPORT:
     if (googleAI) {
       try {
         const r = await googleAI.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-2.0-flash",
           contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
         });
         reply = r.text || "";
