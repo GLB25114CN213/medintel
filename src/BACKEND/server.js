@@ -1,9 +1,7 @@
 /**
  * MedIntel AI – Production Backend Server
- * Multi-Engine Architecture:
- *   1. Google Gemini 2.0 Flash (Multimodal Vision — Direct Pixel OCR/Extraction)
- *   2. Groq Llama 3.3 70B (Text / PDF Extraction)
- *   3. Sharp + Tesseract.js (Fallback OCR Pipeline)
+ * Image Pipeline: Dual-Pass Sharp Image Pre-Processing + Tesseract.js OCR
+ * AI Engine: Groq Llama 3.3 70B (Primary) + Optional Gemini 2.0 Flash Vision
  */
 
 import express from "express";
@@ -86,9 +84,9 @@ const groq     = groqApiKey   ? new Groq({ apiKey: groqApiKey })          : null
 const googleAI = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
 console.log("🚀 MedIntel Backend starting...");
-console.log(`   Gemini 2.0 Flash Vision: ${googleAI ? "✅ READY" : "⚠️ NO KEY (set GEMINI_API_KEY=AIzaSy...)"}`);
 console.log(`   Groq Llama 3.3 70B     : ${groq     ? "✅ READY" : "⚠️ NO KEY"}`);
-console.log("   OCR Engine             : Tesseract.js ✅");
+console.log(`   Gemini 2.0 Flash Vision: ${googleAI ? "✅ READY" : "⚠️ OFF (Groq Dual-Pass OCR active)"}`);
+console.log("   Dual-Pass OCR Engine   : Tesseract.js ✅");
 console.log("   Image Processing       : Sharp ✅");
 
 // ── INPUT VALIDATION ─────────────────────────────────────────────
@@ -157,15 +155,16 @@ function buildMedicalPrompt(ocrText) {
   return `You are MedIntel AI — an expert medical document analysis system.
 
 STRICT RULES:
-1. Analyse ONLY the document visible in the current image / extracted text.
-2. NEVER invent, assume, or hallucinate any value not present in the document.
-3. If a value is missing or unreadable write exactly: "Not Available"
-4. Supply standard WHO/ICMR reference ranges where the report omits them.
-5. If no medical report content is found respond: {"isMedicalReport": false}
+1. Analyse ONLY the document visible in the extracted text below.
+2. Intelligently reconstruct words that may have slight OCR typos (e.g., "Haemogiobin" -> "Hemoglobin").
+3. NEVER invent, assume, or hallucinate any value not present in the text.
+4. If a value is missing or unreadable write exactly: "Not Available"
+5. Supply standard WHO/ICMR reference ranges where the report omits them.
+6. If no medical report content is found respond: {"isMedicalReport": false}
 
-DOCUMENT / OCR CONTENT:
+EXTRACTED DOCUMENT TEXT:
 """
-${ocrText || "Analyse the attached medical report image directly."}
+${ocrText}
 """
 
 Return ONLY a valid JSON object (no markdown fences) with this exact structure:
@@ -266,74 +265,95 @@ app.post(
       console.log(`\n📄 [analyze] file=${originalName} | size=${req.file.size}B | mime=${mimeType}`);
 
       let rawBuffer = fs.readFileSync(filePath);
-      let processedBuffer = rawBuffer;
-
-      // ── Sharp image pre-processing ──────────────────────────────
-      if (isImage) {
-        try {
-          processedBuffer = await sharp(rawBuffer)
-            .rotate()
-            .resize({ width: 2500, fit: "inside", withoutEnlargement: false })
-            .normalize()
-            .toBuffer();
-          mimeType = "image/jpeg";
-        } catch (sharpErr) {
-          console.error("   ⚠️ Sharp failed:", sharpErr.message);
-          processedBuffer = rawBuffer;
-        }
-      }
-
-      // ── Text extraction pass (PDF or Tesseract OCR) ─────────────
       let ocrText = "";
+
+      // ── PDF Text Extraction ──────────────────────────────────────
       if (isPDF) {
         try {
           const parseFn = typeof pdfParse === "function" ? pdfParse : pdfParse.default;
           const pdfData = await parseFn(rawBuffer);
           ocrText = (pdfData.text || "").trim();
+          if (ocrText) console.log(`   ✅ PDF text extracted: ${ocrText.length} chars`);
         } catch (pdfErr) {
           console.error("   ⚠️ PDF parse failed:", pdfErr.message);
         }
-      } else if (isImage) {
+      } else if ([".txt", ".csv"].includes(ext) || mimeType.startsWith("text/")) {
+        ocrText = rawBuffer.toString("utf8");
+      }
+
+      // ── Dual-Pass Sharp Image Pre-Processing & Tesseract OCR ─────
+      if (isImage) {
         try {
-          const ocrResult = await Tesseract.recognize(processedBuffer, "eng", { logger: () => {} });
-          ocrText = (ocrResult.data.text || "").trim();
-          if (ocrText) console.log(`   ✅ Tesseract OCR: ${ocrText.length} chars extracted`);
+          console.log("   🔍 Running Dual-Pass Sharp OCR...");
+
+          // Pass 1: Grayscale & normalize (captures patient info & headers)
+          const pass1Buf = await sharp(rawBuffer)
+            .rotate()
+            .resize({ width: 2400, fit: "inside", withoutEnlargement: false })
+            .grayscale()
+            .normalize()
+            .toBuffer();
+
+          // Pass 2: High-contrast linear stretch (captures faint numbers & small text)
+          const pass2Buf = await sharp(rawBuffer)
+            .rotate()
+            .resize({ width: 2400, fit: "inside", withoutEnlargement: false })
+            .grayscale()
+            .linear(1.8, -40)
+            .sharpen({ sigma: 1.5 })
+            .toBuffer();
+
+          const [ocr1, ocr2] = await Promise.all([
+            Tesseract.recognize(pass1Buf, "eng", { logger: () => {} }),
+            Tesseract.recognize(pass2Buf, "eng", { logger: () => {} }),
+          ]);
+
+          const t1 = (ocr1.data.text || "").trim();
+          const t2 = (ocr2.data.text || "").trim();
+
+          ocrText = `${t1}\n\n--- HIGH CONTRAST PASS ---\n\n${t2}`;
+          console.log(`   ✅ Dual-Pass OCR complete: ${ocrText.length} total chars`);
+
         } catch (ocrErr) {
-          console.error("   ⚠️ Tesseract failed:", ocrErr.message);
+          console.error("   ⚠️ Dual-Pass OCR failed:", ocrErr.message);
         }
       }
 
-      const promptText = buildMedicalPrompt(ocrText.substring(0, 10000));
+      if (!ocrText.trim()) {
+        ocrText = `[No readable text extracted from file: ${originalName}]`;
+      }
+
+      const promptText = buildMedicalPrompt(ocrText.substring(0, 12000));
       let responseText = "";
 
-      // ── Strategy 1: Gemini 2.0 Flash Vision (Direct Pixel AI) ───
-      if (googleAI) {
+      // ── 1. Gemini Vision (if valid key present) ─────────────────
+      if (googleAI && isImage) {
         try {
-          console.log("   ⚡ Executing Gemini 2.0 Flash Vision...");
-          const parts = isImage
-            ? [
-                { inlineData: { mimeType: "image/jpeg", data: processedBuffer.toString("base64") } },
-                { text: promptText },
-              ]
-            : [{ text: promptText }];
-
+          console.log("   ⚡ Calling Gemini 2.0 Flash Vision...");
           const geminiRes = await googleAI.models.generateContent({
             model: "gemini-2.0-flash",
-            contents: [{ role: "user", parts }],
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { inlineData: { mimeType: "image/jpeg", data: rawBuffer.toString("base64") } },
+                  { text: promptText },
+                ],
+              },
+            ],
             config: { generationConfig: { responseMimeType: "application/json" } },
           });
-
           responseText = geminiRes.text || "";
           if (responseText) console.log("   ✅ Gemini Vision success!");
         } catch (geminiErr) {
-          console.error("   ⚠️ Gemini Vision error:", geminiErr.message);
+          console.error("   ⚠️ Gemini Vision failed, using Dual-Pass Groq:", geminiErr.message);
         }
       }
 
-      // ── Strategy 2: Groq Llama 3.3 70B (OCR Text Analysis) ──────
+      // ── 2. Groq Llama 3.3 70B (Primary / Fallback Engine) ─────────
       if (!responseText && groq) {
         try {
-          console.log("   ⚡ Executing Groq Llama 3.3 70B...");
+          console.log("   ⚡ Calling Groq Llama 3.3 70B...");
           const groqRes = await groq.chat.completions.create({
             model: "llama-3.3-70b-versatile",
             messages: [{ role: "user", content: promptText }],
@@ -342,17 +362,14 @@ app.post(
             temperature: 0.1,
           });
           responseText = groqRes.choices[0]?.message?.content || "";
-          if (responseText) console.log("   ✅ Groq success!");
+          if (responseText) console.log("   ✅ Groq Llama 3.3 success!");
         } catch (groqErr) {
-          console.error("   ⚠️ Groq error:", groqErr.message);
+          console.error("   ❌ Groq error:", groqErr.message);
         }
       }
 
       if (!responseText) {
-        return res.status(503).json({
-          success: false,
-          error: "AI services unavailable. Please check that GROQ_API_KEY or GEMINI_API_KEY is configured.",
-        });
+        return res.status(503).json({ success: false, error: "AI services unavailable. Please try again." });
       }
 
       // ── Parse & Validate JSON ────────────────────────────────────
@@ -428,23 +445,7 @@ PATIENT REPORT CONTEXT:
     const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nRULES:\n- Reference the patient's actual report data when answering.\n- Keep replies structured, helpful, and empathetic. Always recommend consulting a qualified doctor.`;
 
     let reply = "";
-
-    // 1. Try Gemini
-    if (googleAI) {
-      try {
-        const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
-        const r = await googleAI.models.generateContent({
-          model: "gemini-2.0-flash",
-          contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-        });
-        reply = r.text || "";
-      } catch (e) {
-        console.error("Gemini chat error:", e.message);
-      }
-    }
-
-    // 2. Fallback to Groq
-    if (!reply && groq) {
+    if (groq) {
       try {
         const r = await groq.chat.completions.create({
           model: "llama-3.3-70b-versatile",
