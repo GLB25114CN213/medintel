@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload, Send, TrendingUp, AlertCircle, Heart, Brain, Shield, Zap, ChevronDown,
@@ -312,14 +312,23 @@ export default function MedIntelAI() {
         riskLevel: oAssessment.riskLevel || data.analysis.riskLevel || "Low",
         summaryPatientFriendly: data.analysis.section7_easyExplanation || data.analysis.simpleExplanation || "Report analysis completed.",
         summaryTechnical: oAssessment.summary || data.analysis.professionalExplanation || "Technical clinical summary completed.",
-        biomarkers: (data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => ({
-          name: b.testName || b.name,
-          value: b.result || b.value,
-          unit: b.unit || "",
-          normalRange: b.referenceRange || b.normalRange || "Not Provided",
-          status: (b.status || "normal").toLowerCase(),
-          significance: b.meaning || b.explanation || "",
-        })),
+        biomarkers: (data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => {
+          const st = (b.status || "normal").toLowerCase();
+          const name = b.testName || b.name || "Test Parameter";
+          let dynamicFallback = "Optimal physiological level within standard reference range.";
+          if (st.includes("high") || st.includes("low") || st.includes("critical") || st.includes("borderline")) {
+            dynamicFallback = `${name} is ${st.toUpperCase()} relative to standard reference interval. Clinical correlation advised.`;
+          }
+
+          return {
+            name: name,
+            value: b.result || b.value,
+            unit: b.unit || "",
+            normalRange: b.referenceRange || b.normalRange || "Not Provided",
+            status: st,
+            significance: b.clinicalSignificance || b.meaning || b.explanation || b.significance || dynamicFallback,
+          };
+        }),
         diagnoses: data.analysis.diagnoses || [],
         symptoms: data.analysis.symptomsIdentified || [],
         alerts: data.analysis.abnormalFindings?.map(a => ({ title: a.name, value: a.value })) || [],
@@ -1026,7 +1035,7 @@ export default function MedIntelAI() {
                                 </span>
                               </td>
                               <td className={`py-4 px-3 text-xs leading-relaxed max-w-[320px] ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                                {bm.significance || 'Normal physiological value.'}
+                                {bm.significance || (st.includes('normal') ? 'Optimal physiological value within standard reference range.' : `${bm.name} is ${st.toUpperCase()} relative to reference limits.`)}
                               </td>
                             </tr>
                           );

@@ -38,7 +38,8 @@ Return ONLY a valid JSON object (no markdown fences) with this exact structure:
       "result": "<measured value>",
       "unit": "<unit>",
       "referenceRange": "<from report or WHO/ICMR standard>",
-      "status": "<Normal | High | Low | Critical | Borderline>"
+      "status": "<Normal | High | Low | Critical | Borderline>",
+      "clinicalSignificance": "<specific 1-line clinical meaning for this parameter and value>"
     }
   ],
   "biomarkers": [
