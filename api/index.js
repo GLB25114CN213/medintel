@@ -18,10 +18,8 @@ function getAiClients() {
   const geminiKey = process.env.GEMINI_API_KEY;
   const groqKey   = process.env.GROQ_API_KEY;
 
-  // Only instantiate Gemini if key starts with AIza (real Google AI Studio API key)
-  const isRealGeminiKey = geminiKey && geminiKey.trim().startsWith("AIza");
-  const googleAI = isRealGeminiKey ? new GoogleGenAI({ apiKey: geminiKey.trim() }) : null;
-  const groq     = groqKey ? new Groq({ apiKey: groqKey.trim() }) : null;
+  const googleAI = geminiKey && geminiKey.trim() ? new GoogleGenAI({ apiKey: geminiKey.trim() }) : null;
+  const groq     = groqKey && groqKey.trim() ? new Groq({ apiKey: groqKey.trim() }) : null;
 
   return { googleAI, groq };
 }
@@ -69,23 +67,27 @@ app.post("/analyze", (req, res) => {
 
       // 1. Gemini Vision (if real AIza key)
       if (googleAI) {
-        try {
-          const parts = isImage
-            ? [
-                { inlineData: { mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg", data: rawBuffer.toString("base64") } },
-                { text: promptText },
-              ]
-            : [{ text: promptText }];
+        const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+        for (const gModel of geminiModels) {
+          try {
+            const parts = isImage
+              ? [
+                  { inlineData: { mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg", data: rawBuffer.toString("base64") } },
+                  { text: promptText },
+                ]
+              : [{ text: promptText }];
 
-          const geminiRes = await googleAI.models.generateContent({
-            model: "gemini-2.0-flash",
-            contents: [{ role: "user", parts }],
-            config: { generationConfig: { responseMimeType: "application/json" } },
-          });
-          responseText = geminiRes.text || "";
-        } catch (e) {
-          console.error("Vercel Gemini error:", e.message);
-          lastError = `Gemini: ${e.message}`;
+            const geminiRes = await googleAI.models.generateContent({
+              model: gModel,
+              contents: [{ role: "user", parts }],
+              config: { generationConfig: { responseMimeType: "application/json" } },
+            });
+            responseText = geminiRes.text || "";
+            if (responseText) break;
+          } catch (e) {
+            console.error(`Vercel Gemini error (${gModel}):`, e.message);
+            lastError = `Gemini (${gModel}): ${e.message}`;
+          }
         }
       }
 
@@ -167,15 +169,19 @@ PATIENT REPORT:
     let reply = "";
 
     if (googleAI) {
-      try {
-        const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
-        const r = await googleAI.models.generateContent({
-          model: "gemini-2.0-flash",
-          contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-        });
-        reply = r.text || "";
-      } catch (e) {
-        console.error("Gemini chat error:", e.message);
+      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      for (const gModel of geminiModels) {
+        try {
+          const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
+          const r = await googleAI.models.generateContent({
+            model: gModel,
+            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+          });
+          reply = r.text || "";
+          if (reply) break;
+        } catch (e) {
+          console.error(`Gemini chat error (${gModel}):`, e.message);
+        }
       }
     }
 

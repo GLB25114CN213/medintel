@@ -252,25 +252,31 @@ app.post(
 
       // ── 1. Gemini Vision (if valid key present) ─────────────────
       if (googleAI && isImage) {
-        try {
-          console.log("   ⚡ Calling Gemini 2.0 Flash Vision...");
-          const geminiRes = await googleAI.models.generateContent({
-            model: "gemini-2.0-flash",
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  { inlineData: { mimeType: "image/jpeg", data: rawBuffer.toString("base64") } },
-                  { text: promptText },
-                ],
-              },
-            ],
-            config: { generationConfig: { responseMimeType: "application/json" } },
-          });
-          responseText = geminiRes.text || "";
-          if (responseText) console.log("   ✅ Gemini Vision success!");
-        } catch (geminiErr) {
-          console.error("   ⚠️ Gemini Vision failed, using Dual-Pass Groq:", geminiErr.message);
+        const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+        for (const gModel of geminiModels) {
+          try {
+            console.log(`   ⚡ Calling Gemini (${gModel})...`);
+            const geminiRes = await googleAI.models.generateContent({
+              model: gModel,
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    { inlineData: { mimeType: "image/jpeg", data: rawBuffer.toString("base64") } },
+                    { text: promptText },
+                  ],
+                },
+              ],
+              config: { generationConfig: { responseMimeType: "application/json" } },
+            });
+            responseText = geminiRes.text || "";
+            if (responseText) {
+              console.log(`   ✅ Gemini Vision (${gModel}) success!`);
+              break;
+            }
+          } catch (geminiErr) {
+            console.error(`   ⚠️ Gemini Vision (${gModel}) failed:`, geminiErr.message);
+          }
         }
       }
 
@@ -375,7 +381,27 @@ PATIENT REPORT CONTEXT:
     const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nRULES:\n- Reference the patient's actual report data when answering.\n- Keep replies structured, helpful, and empathetic. Always recommend consulting a qualified doctor.`;
 
     let reply = "";
-    if (groq) {
+
+    // 1. Primary Engine: Gemini 2.0 / 2.5 / 1.5 Flash Vision AI
+    if (googleAI) {
+      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      for (const gModel of geminiModels) {
+        try {
+          const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
+          const r = await googleAI.models.generateContent({
+            model: gModel,
+            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+          });
+          reply = r.text || "";
+          if (reply) break;
+        } catch (e) {
+          console.error(`Gemini chat error (${gModel}):`, e.message);
+        }
+      }
+    }
+
+    // 2. Fallback Engine: Groq Multi-Model
+    if (!reply && groq) {
       const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
       for (const modelName of groqModels) {
         try {
