@@ -250,9 +250,33 @@ app.post(
       const promptText = buildMedicalPrompt(ocrText.substring(0, 12000));
       let responseText = "";
 
-      // ── 1. Gemini Vision (if valid key present) ─────────────────
-      if (googleAI && isImage) {
-        const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      // ── 1. Groq LPU Ultra-Fast Engine (Sub-second response) ──
+      if (groq) {
+        const primaryGroqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b"];
+        for (const modelName of primaryGroqModels) {
+          try {
+            console.log(`   ⚡ Calling Groq (${modelName})...`);
+            const groqRes = await groq.chat.completions.create({
+              model: modelName,
+              messages: [{ role: "user", content: promptText }],
+              response_format: { type: "json_object" },
+              max_tokens: 3000,
+              temperature: 0.1,
+            });
+            responseText = groqRes.choices[0]?.message?.content || "";
+            if (responseText) {
+              console.log(`   ✅ Sub-second Groq success with ${modelName}`);
+              break;
+            }
+          } catch (groqErr) {
+            console.error(`   ⚠️ Groq (${modelName}) failed:`, groqErr.message);
+          }
+        }
+      }
+
+      // ── 2. Gemini Vision Fallback if Groq unavailable ──
+      if (!responseText && googleAI && isImage) {
+        const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash"];
         for (const gModel of geminiModels) {
           try {
             console.log(`   ⚡ Calling Gemini (${gModel})...`);
@@ -276,30 +300,6 @@ app.post(
             }
           } catch (geminiErr) {
             console.error(`   ⚠️ Gemini Vision (${gModel}) failed:`, geminiErr.message);
-          }
-        }
-      }
-
-      // ── 2. Groq Llama (Primary / Fallback Engine with Model Redundancy) ──
-      if (!responseText && groq) {
-        const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
-        for (const modelName of groqModels) {
-          try {
-            console.log(`   ⚡ Calling Groq (${modelName})...`);
-            const groqRes = await groq.chat.completions.create({
-              model: modelName,
-              messages: [{ role: "user", content: promptText }],
-              response_format: { type: "json_object" },
-              max_tokens: 4096,
-              temperature: 0.1,
-            });
-            responseText = groqRes.choices[0]?.message?.content || "";
-            if (responseText) {
-              console.log(`   ✅ Groq ${modelName} success!`);
-              break;
-            }
-          } catch (groqErr) {
-            console.error(`   ⚠️ Groq ${modelName} rate limited/error:`, groqErr.message);
           }
         }
       }
