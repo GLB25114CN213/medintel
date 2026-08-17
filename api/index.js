@@ -1,13 +1,9 @@
-/**
- * MedIntel AI – Vercel Serverless Handler
- * Dual Engine: Gemini 2.0 Flash Vision (Primary if AIza key) + Groq Llama 3.3 70B (Primary fallback)
- */
-
 import express from "express";
 import cors from "cors";
 import multer from "multer";
 import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
+import { buildMedicalPrompt } from "../server/prompt.js";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -29,83 +25,6 @@ function getAiClients() {
   const groq     = groqKey ? new Groq({ apiKey: groqKey.trim() }) : null;
 
   return { googleAI, groq };
-}
-
-function buildPrompt(ocrText) {
-  return `You are MedIntel AI — an expert medical document analysis system.
-
-STRICT RULES:
-1. Analyse ONLY the medical report in the image / extracted text.
-2. NEVER invent, assume, or hallucinate any value not present in the document.
-3. If a value is missing or unreadable write exactly: "Not Available"
-4. Supply standard WHO/ICMR reference ranges where the report omits them.
-5. If no medical report content is found respond: {"isMedicalReport": false}
-
-DOCUMENT / TEXT CONTENT:
-"""
-${ocrText || "Analyse the attached medical report image."}
-"""
-
-Return ONLY a valid JSON object (no markdown) with this structure:
-{
-  "isMedicalReport": true,
-  "documentType": "<e.g. Complete Blood Count, LFT, MRI, ECG, Prescription>",
-  "section1_patientInformation": {
-    "name": "<or Not Available>",
-    "age": "<or Not Available>",
-    "gender": "<Male / Female / Not Available>",
-    "patientId": "<or Not Available>",
-    "reportDate": "<or Not Available>",
-    "facilityName": "<hospital / lab or Not Available>",
-    "doctorName": "<or Not Available>",
-    "testType": "<panel name or Not Available>"
-  },
-  "section2_testSummaryTable": [
-    {
-      "testName": "<exact test name>",
-      "result": "<measured value>",
-      "unit": "<unit>",
-      "referenceRange": "<from report or WHO/ICMR standard>",
-      "status": "<Normal | High | Low | Critical | Borderline>"
-    }
-  ],
-  "biomarkers": [
-    {
-      "name": "<test name>",
-      "value": "<measured value>",
-      "unit": "<unit>",
-      "normalRange": "<reference range>",
-      "status": "<Normal | High | Low | Critical | Borderline>",
-      "meaning": "<one-line clinical significance>"
-    }
-  ],
-  "section3_keyFindings": {
-    "normalFindings":    [{ "title": "<name + value>", "explanation": "<why it matters>" }],
-    "abnormalFindings":  [{ "title": "<name + value>", "explanation": "<clinical importance>" }],
-    "borderlineFindings":[{ "title": "<name + value>", "explanation": "<watch-out note>" }],
-    "criticalFindings":  [{ "title": "<name + value>", "explanation": "<urgent action needed>" }]
-  },
-  "section4_overallAssessment": {
-    "summary": "<2-3 sentence balanced clinical summary>",
-    "healthScore": <integer 0-100>,
-    "riskLevel": "<Low | Moderate | High>"
-  },
-  "section5_possibleCauses": [
-    { "abnormalValue": "<test + value>", "causes": ["<cause 1>", "<cause 2>", "<cause 3>"] }
-  ],
-  "section6_recommendedFollowUp": {
-    "repeatTesting": "<timeframe or Not Needed>",
-    "additionalInvestigations": ["<test>"],
-    "lifestyleMeasures": ["<advice>"],
-    "specialistConsultation": "<specialist>"
-  },
-  "section7_easyExplanation": "<Plain-language patient-friendly summary — no medical jargon>",
-  "section8_confidenceScore": {
-    "percentage": <integer 0-100>,
-    "reasoning": "<Why this confidence level>"
-  },
-  "disclaimer": "This AI analysis is for educational purposes only. Always consult a qualified medical professional."
-}`;
 }
 
 app.post("/analyze", (req, res) => {
