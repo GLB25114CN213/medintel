@@ -16,8 +16,7 @@ const upload = multer({
 
 function getAiClients() {
   const geminiKey = process.env.GEMINI_API_KEY;
-  const fallbackGroq = Buffer.from("Z3NrX0RpNm5STDVGdEZRTXZnWWRGdlNXR2R5YjNGWVBNcllDdEtudFppQlFDNGdEMU1acDFoaA==", "base64").toString("utf8");
-  const groqKey   = process.env.GROQ_API_KEY || fallbackGroq;
+  const groqKey   = process.env.GROQ_API_KEY;
 
   // Only instantiate Gemini if key starts with AIza (real Google AI Studio API key)
   const isRealGeminiKey = geminiKey && geminiKey.trim().startsWith("AIza");
@@ -92,7 +91,7 @@ app.post("/analyze", (req, res) => {
 
       // 2. Groq Fallback with Multi-Model Redundancy
       if (!responseText && groq) {
-        const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+        const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
         for (const modelName of groqModels) {
           try {
             console.log(`Trying Groq model: ${modelName}...`);

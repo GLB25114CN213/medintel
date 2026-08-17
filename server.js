@@ -276,7 +276,7 @@ app.post(
 
       // ── 2. Groq Llama (Primary / Fallback Engine with Model Redundancy) ──
       if (!responseText && groq) {
-        const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+        const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
         for (const modelName of groqModels) {
           try {
             console.log(`   ⚡ Calling Groq (${modelName})...`);
@@ -376,7 +376,7 @@ PATIENT REPORT CONTEXT:
 
     let reply = "";
     if (groq) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
       for (const modelName of groqModels) {
         try {
           const r = await groq.chat.completions.create({
