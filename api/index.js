@@ -164,7 +164,7 @@ PATIENT REPORT:
 `;
     }
 
-    const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nAlways recommend consulting a qualified doctor. Keep responses clear and empathetic.`;
+    const systemPrompt = `You are MedIntel AI, a compassionate, expert medical assistant.\n${ctxBlock}\nCRITICAL INSTRUCTIONS:\n- Provide ONLY the direct, genuine, clear, and empathetic medical answer to the user.\n- DO NOT output internal thinking processes, <think> tags, reasoning steps, or meta commentary.\n- Keep responses directly helpful, concise, and accurate. Always advise consulting a qualified physician.`;
 
     let reply = "";
 
@@ -204,6 +204,9 @@ PATIENT REPORT:
         }
       }
     }
+
+    // Clean internal thinking tags and extra whitespace
+    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<\?xml[\s\S]*?\?>/gi, "").trim();
 
     if (!reply) reply = "AI chat is temporarily unavailable. Please try again.";
     return res.json({ success: true, message: { role: "assistant", content: reply } });
