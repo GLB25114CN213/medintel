@@ -180,17 +180,22 @@ PATIENT REPORT:
     }
 
     if (!reply && groq) {
-      try {
-        const r = await groq.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...safeMessages,
-          ],
-        });
-        reply = r.choices[0]?.message?.content || "";
-      } catch (e) {
-        console.error("Groq chat error:", e.message);
+      const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      for (const modelName of groqModels) {
+        try {
+          console.log(`Trying Groq chat model: ${modelName}...`);
+          const r = await groq.chat.completions.create({
+            model: modelName,
+            messages: [
+              { role: "system", content: systemPrompt },
+              ...safeMessages,
+            ],
+          });
+          reply = r.choices[0]?.message?.content || "";
+          if (reply) break;
+        } catch (e) {
+          console.error(`Groq chat (${modelName}) error:`, e.message);
+        }
       }
     }
 
