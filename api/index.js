@@ -61,7 +61,7 @@ app.post("/analyze", (req, res) => {
         extractedText = rawBuffer.toString("utf8");
       }
 
-      const promptText = buildPrompt(extractedText.substring(0, 10000));
+      const promptText = buildMedicalPrompt(extractedText.substring(0, 10000));
       let responseText = "";
       let lastError = "";
 
