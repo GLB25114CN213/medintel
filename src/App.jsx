@@ -242,23 +242,29 @@ export default function MedIntelAI() {
         return trimmed;
       };
 
-      // Convert API JSON to UI Structure for 8-Section Clinical Report
-      const pInfo = data.analysis.section1_patientInformation || {};
+      // Convert API JSON to UI Structure for Clinical Report
+      const pInfo = data.analysis.section1_patientInformation || data.analysis.patient || {};
       const oAssessment = data.analysis.section4_overallAssessment || {};
       const kFindings = data.analysis.section3_keyFindings || {};
       const cScore = data.analysis.section8_confidenceScore || {};
       const fUp = data.analysis.section6_recommendedFollowUp || {};
+      const recs = data.analysis.recommendations || {};
+
+      const computedHealthScore = Number(data.analysis.healthScore ?? oAssessment.healthScore) || (data.analysis.abnormalFindings?.length ? Math.max(40, 100 - data.analysis.abnormalFindings.length * 12) : 92);
+      const computedRiskLevel = data.analysis.overallRiskLevel || oAssessment.riskLevel || data.analysis.riskLevel || (computedHealthScore < 50 ? "High" : computedHealthScore < 80 ? "Moderate" : "Low");
+      const computedSummary = data.analysis.summary || data.analysis.section7_easyExplanation || oAssessment.summary || "Clinical diagnostic report analysis completed successfully.";
+      const computedTechnical = data.analysis.healthScoreReason || oAssessment.summary || data.analysis.summary || "Detailed biomarker evaluation completed.";
 
       const convertedAnalysis = {
         section1: {
           name: cleanValue(pInfo.name || data.analysis.patientName),
           age: cleanValue(pInfo.age || data.analysis.age),
-          gender: cleanValue(pInfo.gender || data.analysis.gender),
+          gender: cleanValue(pInfo.gender || pInfo.sex || data.analysis.gender),
           patientId: cleanValue(pInfo.patientId || data.analysis.patientId || data.analysis.patientID),
           testDate: cleanValue(pInfo.reportDate || data.analysis.reportDate),
           facilityName: cleanValue(pInfo.facilityName || data.analysis.facilityName),
           doctorName: cleanValue(pInfo.doctorName || data.analysis.doctorName),
-          testType: cleanValue(pInfo.testType || data.analysis.testType, "Diagnostic Panel")
+          testType: cleanValue(pInfo.testType || data.analysis.reportType || data.analysis.testType, "Diagnostic Panel")
         },
 
         section2_table: (data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => ({
@@ -270,48 +276,48 @@ export default function MedIntelAI() {
         })),
 
         section3_keyFindings: {
-          normal: kFindings.normalFindings || [],
-          abnormal: kFindings.abnormalFindings || [],
+          normal: kFindings.normalFindings || data.analysis.normalFindings || [],
+          abnormal: kFindings.abnormalFindings || data.analysis.abnormalFindings || [],
           borderline: kFindings.borderlineFindings || [],
-          critical: kFindings.criticalFindings || []
+          critical: kFindings.criticalFindings || data.analysis.criticalFindings || []
         },
 
         section4_overallAssessment: {
-          summary: oAssessment.summary || data.analysis.summary || "Balanced clinical summary completed.",
-          healthScore: Number(oAssessment.healthScore || data.analysis.healthScore) || 85,
-          riskLevel: oAssessment.riskLevel || data.analysis.riskLevel || "Low"
+          summary: computedSummary,
+          healthScore: computedHealthScore,
+          riskLevel: computedRiskLevel
         },
 
-        section5_possibleCauses: data.analysis.section5_possibleCauses || [],
+        section5_possibleCauses: data.analysis.section5_possibleCauses || data.analysis.patterns || [],
 
         section6_followUp: {
           repeatTesting: fUp.repeatTesting || "Schedule routine repeat testing in 6 months as advised by doctor",
-          additionalInvestigations: fUp.additionalInvestigations || [],
-          lifestyleMeasures: fUp.lifestyleMeasures || [],
+          additionalInvestigations: fUp.additionalInvestigations || (Array.isArray(recs.followUpTests) ? recs.followUpTests : []),
+          lifestyleMeasures: fUp.lifestyleMeasures || (Array.isArray(recs.lifestyle) ? recs.lifestyle : []),
           specialistConsultation: fUp.specialistConsultation || data.analysis.doctorSuggestion || "General Physician"
         },
 
-        section7_easyExplanation: data.analysis.section7_easyExplanation || data.analysis.simpleExplanation || "Easy to understand patient explanation.",
+        section7_easyExplanation: computedSummary,
 
         section8_confidenceScore: {
           percentage: Number(cScore.percentage) || 95,
-          reasoning: cScore.reasoning || "Based strictly on high quality report legibility."
+          reasoning: cScore.reasoning || "Based strictly on document OCR clarity and reference intervals."
         },
 
-        // Legacy compatibility properties
+        // Legacy compatibility properties for main UI tabs & badges
         patientInfo: {
           name: cleanValue(pInfo.name || data.analysis.patientName),
           age: cleanValue(pInfo.age || data.analysis.age),
-          gender: cleanValue(pInfo.gender || data.analysis.gender),
+          gender: cleanValue(pInfo.gender || pInfo.sex || data.analysis.gender),
           patientId: cleanValue(pInfo.patientId || data.analysis.patientId),
           testDate: cleanValue(pInfo.reportDate || data.analysis.reportDate),
           facilityName: cleanValue(pInfo.facilityName || data.analysis.facilityName),
           doctorName: cleanValue(pInfo.doctorName || data.analysis.doctorName),
         },
-        healthScore: Number(oAssessment.healthScore || data.analysis.healthScore) || 85,
-        riskLevel: oAssessment.riskLevel || data.analysis.riskLevel || "Low",
-        summaryPatientFriendly: data.analysis.section7_easyExplanation || data.analysis.simpleExplanation || "Report analysis completed.",
-        summaryTechnical: oAssessment.summary || data.analysis.professionalExplanation || "Technical clinical summary completed.",
+        healthScore: computedHealthScore,
+        riskLevel: computedRiskLevel,
+        summaryPatientFriendly: computedSummary,
+        summaryTechnical: computedTechnical,
         biomarkers: (data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => {
           let st = (b.status || "normal").toLowerCase();
           const name = b.testName || b.name || "Test Parameter";
@@ -357,19 +363,25 @@ export default function MedIntelAI() {
             significance: b.clinicalSignificance || b.meaning || b.explanation || b.significance || dynamicFallback,
           };
         }),
-        diagnoses: data.analysis.diagnoses || [],
+        diagnoses: (data.analysis.patterns || []).map(p => ({
+          title: typeof p === "string" ? p : p.title || p.pattern || "Observed Pattern",
+          description: typeof p === "object" ? p.explanation || p.description || "" : ""
+        })).concat(data.analysis.diagnoses || []),
         symptoms: data.analysis.symptomsIdentified || [],
-        alerts: data.analysis.abnormalFindings?.map(a => ({ title: a.name, value: a.value })) || [],
+        alerts: (data.analysis.abnormalFindings || data.analysis.criticalFindings || []).map(a => ({
+          title: typeof a === "string" ? a : (a.title || a.name || "Abnormal Value"),
+          value: typeof a === "string" ? "" : (a.value || a.explanation || "")
+        })),
         medicines: data.analysis.medicines || [],
         recommendations: {
-          lifestyle: fUp.lifestyleMeasures?.length ? fUp.lifestyleMeasures : ["Maintain 7-8 hours of quality sleep", "Engage in 30 minutes of aerobic activity"],
-          nutrition: data.analysis.dietRecommendations?.length ? data.analysis.dietRecommendations : ["Focus on whole foods and adequate hydration"],
+          lifestyle: Array.isArray(recs.lifestyle) && recs.lifestyle.length ? recs.lifestyle : (fUp.lifestyleMeasures?.length ? fUp.lifestyleMeasures : ["Maintain 7-8 hours of quality sleep", "Engage in 30 minutes of aerobic activity"]),
+          nutrition: Array.isArray(recs.nutrition) && recs.nutrition.length ? recs.nutrition : (data.analysis.dietRecommendations?.length ? data.analysis.dietRecommendations : ["Focus on whole foods and adequate hydration"]),
           foodsToAvoid: data.analysis.foodsToAvoid || [],
           supplements: data.analysis.supplementRecommendations || [],
-          followUpTests: fUp.additionalInvestigations || ["Routine blood panel in 6 months"],
+          followUpTests: Array.isArray(recs.followUpTests) && recs.followUpTests.length ? recs.followUpTests : (fUp.additionalInvestigations?.length ? fUp.additionalInvestigations : ["Routine blood panel in 6 months"]),
         },
-        doctorQuestions: data.analysis.doctorQuestions || ["Are my lab levels in optimal range for my age?"],
-        doctorSuggestion: fUp.specialistConsultation || "General Physician",
+        doctorQuestions: data.analysis.questionsForDoctor || data.analysis.doctorQuestions || ["Are my lab levels in optimal range for my age?"],
+        doctorSuggestion: fUp.specialistConsultation || data.analysis.doctorSuggestion || "General Physician",
         imageQualityNotes: "Document clinical analysis completed successfully.",
       };
 
