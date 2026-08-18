@@ -4,7 +4,7 @@ import {
   Upload, Send, TrendingUp, AlertCircle, Heart, Brain, Shield, Zap, ChevronDown,
   Menu, X, Plus, Trash2, Download, Eye, EyeOff, ArrowRight, BarChart3, Activity,
   FileText, CheckCircle, Clock, Home, Settings, LogOut, Bell, Search, Calendar,
-  User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon, Printer, MapPin
+  User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon, Printer
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, RadarChart, PolarGrid,
@@ -257,7 +257,6 @@ export default function MedIntelAI() {
           patientId: cleanValue(pInfo.patientId || data.analysis.patientId || data.analysis.patientID),
           testDate: cleanValue(pInfo.reportDate || data.analysis.reportDate),
           facilityName: cleanValue(pInfo.facilityName || data.analysis.facilityName),
-          location: cleanValue(pInfo.location || pInfo.facilityLocation || pInfo.patientLocation || data.analysis.location || data.analysis.facilityLocation || data.analysis.reportLocation, "Location Not Specified"),
           doctorName: cleanValue(pInfo.doctorName || data.analysis.doctorName),
           testType: cleanValue(pInfo.testType || data.analysis.testType, "Diagnostic Panel")
         },
@@ -307,7 +306,6 @@ export default function MedIntelAI() {
           patientId: cleanValue(pInfo.patientId || data.analysis.patientId),
           testDate: cleanValue(pInfo.reportDate || data.analysis.reportDate),
           facilityName: cleanValue(pInfo.facilityName || data.analysis.facilityName),
-          location: cleanValue(pInfo.location || pInfo.facilityLocation || pInfo.patientLocation || data.analysis.location || data.analysis.facilityLocation || data.analysis.reportLocation, "Location Not Specified"),
           doctorName: cleanValue(pInfo.doctorName || data.analysis.doctorName),
         },
         healthScore: Number(oAssessment.healthScore || data.analysis.healthScore) || 85,
@@ -827,19 +825,10 @@ export default function MedIntelAI() {
 
               {/* 1. PATIENT & HOSPITAL METADATA CARD */}
               <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
-                    <User className="w-4 h-4" /> Patient & Document Profile
-                  </h3>
-                  {analysisResults.patientInfo.location && analysisResults.patientInfo.location !== 'Location Not Specified' && (
-                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1.5 shadow-sm">
-                      <MapPin className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>{analysisResults.patientInfo.location}</span>
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 text-sm">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-4 flex items-center gap-2">
+                  <User className="w-4 h-4" /> Patient & Document Profile
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
                   <div>
                     <span className="text-xs text-slate-400 block">Patient Name</span>
                     <span className="font-bold">{analysisResults.patientInfo.name}</span>
@@ -859,12 +848,6 @@ export default function MedIntelAI() {
                   <div>
                     <span className="text-xs text-slate-400 block">Facility / Laboratory</span>
                     <span className="font-bold">{analysisResults.patientInfo.facilityName}</span>
-                  </div>
-                  <div className="col-span-1">
-                    <span className="text-xs text-cyan-400 font-bold block flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-cyan-400" /> Report Location
-                    </span>
-                    <span className="font-extrabold text-cyan-300">{analysisResults.patientInfo.location}</span>
                   </div>
                   <div>
                     <span className="text-xs text-slate-400 block">Attending Physician</span>

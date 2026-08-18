@@ -245,23 +245,41 @@ app.post(
 
       if (!ocrText.trim()) {
         ocrText = `[No readable text extracted from file: ${originalName}]`;
-      } else {
-        // Titer & Serology OCR Normalization: Repair ratios like "1 160", "1.160", "1: 160" -> "1:160"
-        ocrText = ocrText
-          .replace(/\b(1)\s*[:\.\-;\s]\s*(20|40|80|160|320|640|1280)\b/gi, "$1:$2")
-          .replace(/S\s*[\.\s]?\s*Typhi/gi, "S. Typhi")
-          .replace(/Paratyphi/gi, "Paratyphi");
       }
 
       const promptText = buildMedicalPrompt(ocrText.substring(0, 12000));
       let responseText = "";
 
-      // ── 1. Gemini Vision Priority for Images (Visual grid & table layout parsing) ──
-      if (googleAI && isImage) {
-        const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
+      // ── 1. Groq LPU Ultra-Fast Engine (Sub-second response) ──
+      if (groq) {
+        const primaryGroqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b"];
+        for (const modelName of primaryGroqModels) {
+          try {
+            console.log(`   ⚡ Calling Groq (${modelName})...`);
+            const groqRes = await groq.chat.completions.create({
+              model: modelName,
+              messages: [{ role: "user", content: promptText }],
+              response_format: { type: "json_object" },
+              max_tokens: 3000,
+              temperature: 0.1,
+            });
+            responseText = groqRes.choices[0]?.message?.content || "";
+            if (responseText) {
+              console.log(`   ✅ Sub-second Groq success with ${modelName}`);
+              break;
+            }
+          } catch (groqErr) {
+            console.error(`   ⚠️ Groq (${modelName}) failed:`, groqErr.message);
+          }
+        }
+      }
+
+      // ── 2. Gemini Vision Fallback if Groq unavailable ──
+      if (!responseText && googleAI && isImage) {
+        const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash"];
         for (const gModel of geminiModels) {
           try {
-            console.log(`   ⚡ Calling Gemini Vision (${gModel})...`);
+            console.log(`   ⚡ Calling Gemini (${gModel})...`);
             const geminiRes = await googleAI.models.generateContent({
               model: gModel,
               contents: [
@@ -282,30 +300,6 @@ app.post(
             }
           } catch (geminiErr) {
             console.error(`   ⚠️ Gemini Vision (${gModel}) failed:`, geminiErr.message);
-          }
-        }
-      }
-
-      // ── 2. Groq LPU Fast Engine (Primary for Text/PDF or fallback for Images) ──
-      if (!responseText && groq) {
-        const primaryGroqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
-        for (const modelName of primaryGroqModels) {
-          try {
-            console.log(`   ⚡ Calling Groq (${modelName})...`);
-            const groqRes = await groq.chat.completions.create({
-              model: modelName,
-              messages: [{ role: "user", content: promptText }],
-              response_format: { type: "json_object" },
-              max_tokens: 3000,
-              temperature: 0.1,
-            });
-            responseText = groqRes.choices[0]?.message?.content || "";
-            if (responseText) {
-              console.log(`   ✅ Groq success with ${modelName}`);
-              break;
-            }
-          } catch (groqErr) {
-            console.error(`   ⚠️ Groq (${modelName}) failed:`, groqErr.message);
           }
         }
       }
@@ -388,9 +382,9 @@ PATIENT REPORT CONTEXT:
 
     let reply = "";
 
-    // 1. Primary Engine: Gemini 2.0 / 1.5 Flash Vision AI
+    // 1. Primary Engine: Gemini 2.0 / 2.5 / 1.5 Flash Vision AI
     if (googleAI) {
-      const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
+      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
       for (const gModel of geminiModels) {
         try {
           const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
@@ -408,7 +402,7 @@ PATIENT REPORT CONTEXT:
 
     // 2. Fallback Engine: Groq Multi-Model
     if (!reply && groq) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
+      const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
       for (const modelName of groqModels) {
         try {
           const r = await groq.chat.completions.create({

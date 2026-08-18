@@ -3,25 +3,15 @@
  */
 
 export function buildMedicalPrompt(ocrText) {
-  return `You are MedIntel AI — an expert clinical medical document and blood report analysis system.
+  return `You are MedIntel AI — an expert medical document analysis system.
 
-STRICT MEDICAL ANALYSIS RULES:
-1. Support ALL types of blood tests and diagnostic reports:
-   - Hematology: Complete Blood Count (CBC), Hemoglobin, WBC Differential, Platelets, ESR, Peripheral Blood Film.
-   - Serology & Agglutination: Widal Test (Salmonella Typhi 'O', 'H', S. Paratyphi 'AH', 'BH' agglutination titers), Dengue NS1/IgG/IgM, Malaria Antigen/Smear, CRP, Rheumatoid Factor (RA), ASO Titer.
-   - Biochemistry & Organ Panels: Liver Function Test (LFT), Kidney/Renal Function Test (KFT/RFT), Lipid Profile, Blood Glucose (Fasting/PP/Random), HbA1c (Glycated Hemoglobin), Serum Electrolytes (Sodium, Potassium, Chloride).
-   - Endocrinology & Vitamins: Thyroid Profile (Total/Free T3, T4, TSH), Vitamin D3 (25-OH), Vitamin B12, Iron Profile / Ferritin, Hormones.
-   - Coagulation: Prothrombin Time (PT), INR, APTT.
-2. Widal & Serology Special Handling:
-   - Recognize agglutination titers expressed as ratios (e.g., "1:20", "1:40", "1:80", "1:160", "1:320").
-   - Intelligently repair OCR ratio misreads (e.g., "1 160", "1.160", "1;160" -> "1:160" or "S Typhi O i 160" -> "S. Typhi 'O': 1:160").
-   - Widal Clinical Rule: Titers >= 1:160 for 'O' or 'H' antigens indicate significant agglutination / active or recent Typhoid (Enteric) infection.
-   - Accept qualitative results like "Positive (+)", "Negative (-)", "Reactive", "Non-Reactive", "Present", "Absent".
-3. Intelligently reconstruct terms with OCR typos (e.g., "Haemogiobin" -> "Hemoglobin", "Salmoneila" -> "Salmonella", "Bilirubn" -> "Bilirubin").
-4. NEVER invent or hallucinate any test or value not present in the text.
-5. If a patient demographic field is missing, write "Not Available".
-6. Supply standard medical reference ranges (ICMR / WHO standards) if the report omits them.
-7. If the document is non-medical, respond: {"isMedicalReport": false}
+STRICT RULES:
+1. Analyse ONLY the document visible in the extracted text / image below.
+2. Intelligently reconstruct words that may have slight OCR typos (e.g., "Haemogiobin" -> "Hemoglobin").
+3. NEVER invent, assume, or hallucinate any value not present in the text.
+4. If a value is missing or unreadable write exactly: "Not Available"
+5. Supply standard WHO/ICMR reference ranges where the report omits them.
+6. If no medical report content is found respond: {"isMedicalReport": false}
 
 EXTRACTED DOCUMENT TEXT:
 """
@@ -31,7 +21,7 @@ ${ocrText || "Analyse the attached medical report image."}
 Return ONLY a valid JSON object (no markdown fences) with this exact structure:
 {
   "isMedicalReport": true,
-  "documentType": "<e.g. Widal Test Serology Report, Complete Blood Count (CBC), Liver Function Test (LFT), Kidney Function Test (KFT), Lipid Profile, Thyroid Panel>",
+  "documentType": "<e.g. Complete Blood Count, LFT, MRI, ECG, Prescription>",
   "section1_patientInformation": {
     "name": "<or Not Available>",
     "age": "<or Not Available>",
@@ -39,17 +29,15 @@ Return ONLY a valid JSON object (no markdown fences) with this exact structure:
     "patientId": "<or Not Available>",
     "reportDate": "<or Not Available>",
     "facilityName": "<hospital / lab or Not Available>",
-    "facilityLocation": "<city, state, or full lab/hospital address or Not Available>",
-    "location": "<city, state, facility address, or anatomical region extracted from report or Not Available>",
     "doctorName": "<or Not Available>",
     "testType": "<panel name or Not Available>"
   },
   "section2_testSummaryTable": [
     {
       "testName": "<exact test name>",
-      "result": "<measured value or titer e.g. 1:160 or Positive>",
-      "unit": "<unit or Titer / Qualitative>",
-      "referenceRange": "<from report or WHO/ICMR standard e.g. < 1:80>",
+      "result": "<measured value>",
+      "unit": "<unit>",
+      "referenceRange": "<from report or WHO/ICMR standard>",
       "status": "<Normal | High | Low | Critical | Borderline>",
       "clinicalSignificance": "<specific 1-line clinical meaning for this parameter and value>"
     }
@@ -92,4 +80,3 @@ Return ONLY a valid JSON object (no markdown fences) with this exact structure:
   "disclaimer": "This AI analysis is for educational purposes only. Always consult a qualified medical professional."
 }`;
 }
-
