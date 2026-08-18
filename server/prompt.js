@@ -30,10 +30,16 @@ Extract all readable information from the report:
 - Test details: test name, result/value, unit, reference range, positive/negative status, qualitative findings, lab comments, abnormal flags.
 - Do NOT invent missing values. If a value cannot be read, set it to "notReadable" or "Not Available".
 
-## 3. UNDERSTAND REFERENCE RANGES
+## 3. UNDERSTAND REFERENCE RANGES & STRICT STATUS EVALUATION
 - Use the reference range printed on the report whenever available. Do not automatically assume one universal normal range applies to all laboratories.
-- Consider age, sex, pregnancy status, fasting status, units, and lab-specific intervals.
-- Classify each result status as exactly one of: "LOW" | "NORMAL" | "HIGH" | "CRITICAL" | "POSITIVE" | "NEGATIVE" | "BORDERLINE" | "UNKNOWN".
+- MUST compare patient measured value strictly against the printed reference range:
+  - If measured numeric value > upper reference limit -> status MUST be "HIGH".
+  - If measured numeric value < lower reference limit -> status MUST be "LOW".
+  - If value is dangerously abnormal or flagged critical -> status MUST be "CRITICAL".
+  - If serology/titer/antibody/antigen is present or reactive -> status MUST be "POSITIVE".
+  - If value is close to upper/lower reference boundary -> status MUST be "BORDERLINE".
+  - If result is within normal reference interval -> status MUST be "NORMAL".
+  - NEVER mark values above or below reference bounds as "NORMAL".
 
 ## 4. ANALYZE EACH PARAMETER & RELATED PANELS
 For every parameter, evaluate:

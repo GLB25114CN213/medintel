@@ -313,10 +313,38 @@ export default function MedIntelAI() {
         summaryPatientFriendly: data.analysis.section7_easyExplanation || data.analysis.simpleExplanation || "Report analysis completed.",
         summaryTechnical: oAssessment.summary || data.analysis.professionalExplanation || "Technical clinical summary completed.",
         biomarkers: (data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => {
-          const st = (b.status || "normal").toLowerCase();
+          let st = (b.status || "normal").toLowerCase();
           const name = b.testName || b.name || "Test Parameter";
+          const valStr = String(b.result || b.value || "");
+          const valNum = parseFloat(valStr.replace(/,/g, ""));
+          const rangeStr = String(b.referenceRange || b.normalRange || "");
+
+          // Fallback auto-evaluator if status was normal/missing but numbers exceed printed range bounds
+          if (!isNaN(valNum) && rangeStr && (st === "normal" || st === "unknown" || !st)) {
+            const rangeMatch = rangeStr.match(/([\d\.]+)\s*[\-\–\—\s]\s*([\d\.]+)/);
+            if (rangeMatch) {
+              const min = parseFloat(rangeMatch[1]);
+              const max = parseFloat(rangeMatch[2]);
+              if (!isNaN(min) && !isNaN(max)) {
+                if (valNum > max) st = "high";
+                else if (valNum < min) st = "low";
+              }
+            } else {
+              const maxMatch = rangeStr.match(/<\s*([\d\.]+)/);
+              if (maxMatch) {
+                const max = parseFloat(maxMatch[1]);
+                if (!isNaN(max) && valNum > max) st = "high";
+              }
+              const minMatch = rangeStr.match(/>\s*([\d\.]+)/);
+              if (minMatch) {
+                const min = parseFloat(minMatch[1]);
+                if (!isNaN(min) && valNum < min) st = "low";
+              }
+            }
+          }
+
           let dynamicFallback = "Optimal physiological level within standard reference range.";
-          if (st.includes("high") || st.includes("low") || st.includes("critical") || st.includes("borderline")) {
+          if (st.includes("high") || st.includes("low") || st.includes("critical") || st.includes("borderline") || st.includes("positive") || st.includes("elevated") || st.includes("decreased")) {
             dynamicFallback = `${name} is ${st.toUpperCase()} relative to standard reference interval. Clinical correlation advised.`;
           }
 
@@ -993,28 +1021,35 @@ export default function MedIntelAI() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/10">
-                        {analysisResults.biomarkers.map((bm, i) => {
                           const st = (bm.status || 'normal').toLowerCase();
                           const isCritical = st.includes('critical');
-                          const isHigh = st.includes('high');
-                          const isLow = st.includes('low');
+                          const isHigh = st.includes('high') || st.includes('elevated');
+                          const isLow = st.includes('low') || st.includes('decreased');
+                          const isPositive = st.includes('positive') || st.includes('reactive') || st.includes('abnormal');
+                          const isNegative = st.includes('negative') || st.includes('non-reactive');
                           const isBorderline = st.includes('borderline');
 
                           let badgeClass = "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
-                          let statusText = "NORMAL";
+                          let statusText = (bm.status || "NORMAL").toUpperCase();
 
                           if (isCritical) {
                             badgeClass = "bg-rose-500/25 text-rose-300 border-rose-500/40 font-black animate-pulse";
-                            statusText = "CRITICAL HIGH";
+                            statusText = bm.status ? bm.status.toUpperCase() : "CRITICAL";
                           } else if (isHigh) {
                             badgeClass = "bg-amber-500/20 text-amber-300 border-amber-500/30";
-                            statusText = "HIGH";
+                            statusText = bm.status ? bm.status.toUpperCase() : "HIGH";
                           } else if (isLow) {
                             badgeClass = "bg-amber-500/20 text-amber-300 border-amber-500/30";
-                            statusText = "LOW";
+                            statusText = bm.status ? bm.status.toUpperCase() : "LOW";
+                          } else if (isPositive) {
+                            badgeClass = "bg-rose-500/20 text-rose-300 border-rose-500/30 font-bold";
+                            statusText = bm.status ? bm.status.toUpperCase() : "POSITIVE";
                           } else if (isBorderline) {
                             badgeClass = "bg-purple-500/20 text-purple-300 border-purple-500/30";
-                            statusText = "BORDERLINE";
+                            statusText = bm.status ? bm.status.toUpperCase() : "BORDERLINE";
+                          } else if (isNegative) {
+                            badgeClass = "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+                            statusText = bm.status ? bm.status.toUpperCase() : "NEGATIVE";
                           }
 
                           return (
