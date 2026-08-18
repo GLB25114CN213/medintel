@@ -1021,6 +1021,7 @@ export default function MedIntelAI() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/10">
+                        {analysisResults.biomarkers.map((bm, i) => {
                           const st = (bm.status || 'normal').toLowerCase();
                           const isCritical = st.includes('critical');
                           const isHigh = st.includes('high') || st.includes('elevated');
