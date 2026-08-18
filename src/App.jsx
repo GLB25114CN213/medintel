@@ -1136,7 +1136,7 @@ export default function MedIntelAI() {
                   <ul className="space-y-2">
                     {analysisResults.radiologyFindings.map((rf, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
-                        <span className="text-cyan-400 font-bold">ΓÇó</span>
+                        <span className="text-cyan-400 font-bold">•</span>
                         <span>{rf}</span>
                       </li>
                     ))}
@@ -1154,7 +1154,7 @@ export default function MedIntelAI() {
                   <ul className="space-y-2 mb-4">
                     {analysisResults.recommendations.nutrition.map((item, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
-                        <span className="text-emerald-400 font-bold">ΓÇó</span>
+                        <span className="text-emerald-400 font-bold">•</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -1182,7 +1182,7 @@ export default function MedIntelAI() {
                   <ul className="space-y-2 mb-4">
                     {analysisResults.recommendations.lifestyle.map((item, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
-                        <span className="text-cyan-400 font-bold">ΓÇó</span>
+                        <span className="text-cyan-400 font-bold">•</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -1194,7 +1194,7 @@ export default function MedIntelAI() {
                       <ul className="space-y-1">
                         {analysisResults.recommendations.followUpTests.map((ft, i) => (
                           <li key={i} className="text-xs flex items-center gap-2 text-indigo-300">
-                            <span className="font-bold">ΓÇó</span> {ft}
+                            <span className="font-bold">•</span> {ft}
                           </li>
                         ))}
                       </ul>
@@ -1212,7 +1212,7 @@ export default function MedIntelAI() {
                   <ul className="space-y-2">
                     {analysisResults.doctorQuestions.map((q, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
-                        <span className="text-indigo-400 font-bold">ΓÇó</span>
+                        <span className="text-indigo-400 font-bold">•</span>
                         <span>{q}</span>
                       </li>
                     ))}
@@ -1548,7 +1548,7 @@ export default function MedIntelAI() {
                     required
                     value={authForm.password}
                     onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
-                    placeholder="ΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇóΓÇó"
+                    placeholder="••••••••"
                     className={`w-full pl-11 pr-11 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
                   />
                   <button

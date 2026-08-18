@@ -388,9 +388,9 @@ PATIENT REPORT CONTEXT:
 
     let reply = "";
 
-    // 1. Primary Engine: Gemini 2.0 / 2.5 / 1.5 Flash Vision AI
+    // 1. Primary Engine: Gemini 2.0 / 1.5 Flash Vision AI
     if (googleAI) {
-      const geminiModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
       for (const gModel of geminiModels) {
         try {
           const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
@@ -408,7 +408,7 @@ PATIENT REPORT CONTEXT:
 
     // 2. Fallback Engine: Groq Multi-Model
     if (!reply && groq) {
-      const groqModels = ["qwen/qwen3.6-27b", "groq/compound", "openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
       for (const modelName of groqModels) {
         try {
           const r = await groq.chat.completions.create({
