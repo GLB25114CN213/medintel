@@ -388,8 +388,30 @@ PATIENT REPORT CONTEXT:
 
     let reply = "";
 
-    // 1. Primary Engine: Gemini 2.0 / 1.5 Flash Vision AI
-    if (googleAI) {
+    // 1. High-Speed Groq LPU Engine (< 1s response time)
+    if (groq) {
+      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      for (const modelName of groqModels) {
+        try {
+          const r = await groq.chat.completions.create({
+            model: modelName,
+            messages: [
+              { role: "system", content: systemPrompt },
+              ...safeMessages.map(m => ({ role: m.role, content: m.content })),
+            ],
+            max_tokens: 1500,
+            temperature: 0.2,
+          });
+          reply = r.choices[0]?.message?.content || "";
+          if (reply) break;
+        } catch (e) {
+          console.error(`Groq chat error (${modelName}):`, e.message);
+        }
+      }
+    }
+
+    // 2. Gemini Fallback if Groq unavailable
+    if (!reply && googleAI) {
       const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
       for (const gModel of geminiModels) {
         try {
@@ -402,26 +424,6 @@ PATIENT REPORT CONTEXT:
           if (reply) break;
         } catch (e) {
           console.error(`Gemini chat error (${gModel}):`, e.message);
-        }
-      }
-    }
-
-    // 2. Fallback Engine: Groq Multi-Model
-    if (!reply && groq) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
-      for (const modelName of groqModels) {
-        try {
-          const r = await groq.chat.completions.create({
-            model: modelName,
-            messages: [
-              { role: "system", content: systemPrompt },
-              ...safeMessages.map(m => ({ role: m.role, content: m.content })),
-            ],
-          });
-          reply = r.choices[0]?.message?.content || "";
-          if (reply) break;
-        } catch (e) {
-          console.error(`Groq chat error (${modelName}):`, e.message);
         }
       }
     }
