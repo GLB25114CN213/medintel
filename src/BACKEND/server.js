@@ -19,8 +19,8 @@ import pdfParse from "pdf-parse";
 import Tesseract from "tesseract.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import db, { runQuery, getQuery, allQuery } from "./server/db.js";
-import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./server/authMiddleware.js";
+import db, { runQuery, getQuery, allQuery } from "./src/BACKEND/db.js";
+import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./src/BACKEND/authMiddleware.js";
 
 dotenv.config();
 
@@ -150,7 +150,84 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
   }
 });
 
-import { buildMedicalPrompt } from "./server/prompt.js";
+// ── MEDICAL ANALYSIS PROMPT ───────────────────────────────────────
+function buildMedicalPrompt(ocrText) {
+  return `You are MedIntel AI — an expert medical document analysis system.
+
+STRICT RULES:
+1. Analyse ONLY the document visible in the extracted text below.
+2. Intelligently reconstruct words that may have slight OCR typos (e.g., "Haemogiobin" -> "Hemoglobin").
+3. NEVER invent, assume, or hallucinate any value not present in the text.
+4. If a value is missing or unreadable write exactly: "Not Available"
+5. Supply standard WHO/ICMR reference ranges where the report omits them.
+6. If no medical report content is found respond: {"isMedicalReport": false}
+
+EXTRACTED DOCUMENT TEXT:
+"""
+${ocrText}
+"""
+
+Return ONLY a valid JSON object (no markdown fences) with this exact structure:
+{
+  "isMedicalReport": true,
+  "documentType": "<e.g. Complete Blood Count, LFT, MRI, ECG, Prescription>",
+  "section1_patientInformation": {
+    "name": "<or Not Available>",
+    "age": "<or Not Available>",
+    "gender": "<Male / Female / Not Available>",
+    "patientId": "<or Not Available>",
+    "reportDate": "<or Not Available>",
+    "facilityName": "<hospital / lab or Not Available>",
+    "doctorName": "<or Not Available>",
+    "testType": "<panel name or Not Available>"
+  },
+  "section2_testSummaryTable": [
+    {
+      "testName": "<exact test name>",
+      "result": "<measured value>",
+      "unit": "<unit>",
+      "referenceRange": "<from report or WHO/ICMR standard>",
+      "status": "<Normal | High | Low | Critical | Borderline>"
+    }
+  ],
+  "biomarkers": [
+    {
+      "name": "<test name>",
+      "value": "<measured value>",
+      "unit": "<unit>",
+      "normalRange": "<reference range>",
+      "status": "<Normal | High | Low | Critical | Borderline>",
+      "meaning": "<one-line clinical significance>"
+    }
+  ],
+  "section3_keyFindings": {
+    "normalFindings":    [{ "title": "<name + value>", "explanation": "<why it matters>" }],
+    "abnormalFindings":  [{ "title": "<name + value>", "explanation": "<clinical importance>" }],
+    "borderlineFindings":[{ "title": "<name + value>", "explanation": "<watch-out note>" }],
+    "criticalFindings":  [{ "title": "<name + value>", "explanation": "<urgent action needed>" }]
+  },
+  "section4_overallAssessment": {
+    "summary": "<2-3 sentence balanced clinical summary>",
+    "healthScore": <integer 0-100>,
+    "riskLevel": "<Low | Moderate | High>"
+  },
+  "section5_possibleCauses": [
+    { "abnormalValue": "<test + value>", "causes": ["<cause 1>", "<cause 2>", "<cause 3>"] }
+  ],
+  "section6_recommendedFollowUp": {
+    "repeatTesting": "<timeframe or Not Needed>",
+    "additionalInvestigations": ["<test>"],
+    "lifestyleMeasures": ["<advice>"],
+    "specialistConsultation": "<specialist>"
+  },
+  "section7_easyExplanation": "<Plain-language patient-friendly summary — no medical jargon>",
+  "section8_confidenceScore": {
+    "percentage": <integer 0-100>,
+    "reasoning": "<Why this confidence level>"
+  },
+  "disclaimer": "This AI analysis is for educational purposes only. Always consult a qualified medical professional."
+}`;
+}
 
 // ── /analyze ENDPOINT ─────────────────────────────────────────────
 app.post(
@@ -245,67 +322,55 @@ app.post(
 
       if (!ocrText.trim()) {
         ocrText = `[No readable text extracted from file: ${originalName}]`;
-      } else {
-        // Titer & Serology OCR Normalization: Repair ratios like "1 160", "1.160", "1: 160" -> "1:160"
-        ocrText = ocrText
-          .replace(/\b(1)\s*[:\.\-;\s]\s*(20|40|80|160|320|640|1280)\b/gi, "$1:$2")
-          .replace(/S\s*[\.\s]?\s*Typhi/gi, "S. Typhi")
-          .replace(/Paratyphi/gi, "Paratyphi");
       }
 
       const promptText = buildMedicalPrompt(ocrText.substring(0, 12000));
       let responseText = "";
 
-      // ── 1. Gemini Vision Priority for Images (Visual grid & table layout parsing) ──
+      // ── 1. Gemini Vision (if valid key present) ─────────────────
       if (googleAI && isImage) {
-        const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
-        for (const gModel of geminiModels) {
-          try {
-            console.log(`   ⚡ Calling Gemini Vision (${gModel})...`);
-            const geminiRes = await googleAI.models.generateContent({
-              model: gModel,
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { inlineData: { mimeType: "image/jpeg", data: rawBuffer.toString("base64") } },
-                    { text: promptText },
-                  ],
-                },
-              ],
-              config: { generationConfig: { responseMimeType: "application/json" } },
-            });
-            responseText = geminiRes.text || "";
-            if (responseText) {
-              console.log(`   ✅ Gemini Vision (${gModel}) success!`);
-              break;
-            }
-          } catch (geminiErr) {
-            console.error(`   ⚠️ Gemini Vision (${gModel}) failed:`, geminiErr.message);
-          }
+        try {
+          console.log("   ⚡ Calling Gemini 2.0 Flash Vision...");
+          const geminiRes = await googleAI.models.generateContent({
+            model: "gemini-2.0-flash",
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { inlineData: { mimeType: "image/jpeg", data: rawBuffer.toString("base64") } },
+                  { text: promptText },
+                ],
+              },
+            ],
+            config: { generationConfig: { responseMimeType: "application/json" } },
+          });
+          responseText = geminiRes.text || "";
+          if (responseText) console.log("   ✅ Gemini Vision success!");
+        } catch (geminiErr) {
+          console.error("   ⚠️ Gemini Vision failed, using Dual-Pass Groq:", geminiErr.message);
         }
       }
 
-      // ── 2. Groq LPU Ultra-Fast Engine (Primary for Text/PDF or fallback for Images) ──
+      // ── 2. Groq Llama (Primary / Fallback Engine with Model Redundancy) ──
       if (!responseText && groq) {
-        const primaryGroqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
-        for (const modelName of primaryGroqModels) {
+        const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+        for (const modelName of groqModels) {
           try {
             console.log(`   ⚡ Calling Groq (${modelName})...`);
             const groqRes = await groq.chat.completions.create({
               model: modelName,
               messages: [{ role: "user", content: promptText }],
               response_format: { type: "json_object" },
-              max_tokens: 3000,
+              max_tokens: 4096,
               temperature: 0.1,
             });
             responseText = groqRes.choices[0]?.message?.content || "";
             if (responseText) {
-              console.log(`   ✅ Groq success with ${modelName}`);
+              console.log(`   ✅ Groq ${modelName} success!`);
               break;
             }
           } catch (groqErr) {
-            console.error(`   ⚠️ Groq (${modelName}) failed:`, groqErr.message);
+            console.error(`   ⚠️ Groq ${modelName} rate limited/error:`, groqErr.message);
           }
         }
       }
@@ -384,31 +449,11 @@ PATIENT REPORT CONTEXT:
 `;
     }
 
-    const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nCRITICAL INSTRUCTIONS:\n- Provide ONLY the direct, genuine, clear, and empathetic medical answer to the user.\n- DO NOT output internal thinking processes, <think> tags, reasoning steps, or meta commentary.\n- Keep responses directly helpful, concise, and accurate. Always advise consulting a qualified doctor.`;
+    const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nRULES:\n- Reference the patient's actual report data when answering.\n- Keep replies structured, helpful, and empathetic. Always recommend consulting a qualified doctor.`;
 
     let reply = "";
-
-    // 1. Primary Engine: Gemini 2.0 / 1.5 Flash Vision AI
-    if (googleAI) {
-      const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
-      for (const gModel of geminiModels) {
-        try {
-          const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
-          const r = await googleAI.models.generateContent({
-            model: gModel,
-            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-          });
-          reply = r.text || "";
-          if (reply) break;
-        } catch (e) {
-          console.error(`Gemini chat error (${gModel}):`, e.message);
-        }
-      }
-    }
-
-    // 2. Fallback Engine: Groq Multi-Model
-    if (!reply && groq) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
+    if (groq) {
+      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
       for (const modelName of groqModels) {
         try {
           const r = await groq.chat.completions.create({
@@ -425,9 +470,6 @@ PATIENT REPORT CONTEXT:
         }
       }
     }
-
-    // Clean internal thinking tags and extra whitespace
-    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<\?xml[\s\S]*?\?>/gi, "").trim();
 
     if (!reply) reply = "AI chat is temporarily unavailable. Please try again.";
 
