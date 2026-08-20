@@ -4,7 +4,8 @@ import {
   Upload, Send, TrendingUp, AlertCircle, Heart, Brain, Shield, Zap, ChevronDown,
   Menu, X, Plus, Trash2, Download, Eye, EyeOff, ArrowRight, BarChart3, Activity,
   FileText, CheckCircle, Clock, Home, Settings, LogOut, Bell, Search, Calendar,
-  User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon, Printer
+  User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon, Printer,
+  QrCode, ShieldCheck, UserCheck, FileCheck, AlertTriangle, Stethoscope, Building2, ExternalLink, Share2, History, CheckSquare, XSquare, MapPin
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, RadarChart, PolarGrid,
@@ -44,13 +45,41 @@ export default function MedIntelAI() {
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
   // Main App States
-  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'upload', 'analysis', 'chat', 'reports'
+  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'upload', 'analysis', 'chat', 'reports', 'hdims_health', 'hdims_qr', 'hdims_doctor'
   const [darkMode, setDarkMode] = useState(true); // Default to sleek dark glass mode
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [reports, setReports] = useState([]);
   const [analysisResults, setAnalysisResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [savedUserReports, setSavedUserReports] = useState([]);
+
+  // HDIMS Healthcare Extension States
+  const [doctorRole, setDoctorRole] = useState(false); // false = Patient View, true = Doctor View
+  const [hdimsPatient, setHdimsPatient] = useState({
+    patient_id: "MI-PAT-100245",
+    full_name: "Aarav Patel",
+    email: "aarav.patel@example.com",
+    abha_id: "91-4820-1129-8402",
+    blood_group: "O+",
+    emergency_contact: "+91 98765 43210",
+    allergies: "Penicillin, Dust Mites",
+    dob: "1990-05-14",
+    gender: "Male",
+    aadhaar_verified: 1,
+  });
+  const [hdimsRecords, setHdimsRecords] = useState(null);
+  const [qrSession, setQrSession] = useState(null);
+  const [qrDuration, setQrDuration] = useState(10);
+  const [qrCountdown, setQrCountdown] = useState("");
+  const [consentModalOpen, setConsentModalOpen] = useState(false);
+  const [consentSessionData, setConsentSessionData] = useState(null);
+  const [qrInput, setQrInput] = useState("");
+  const [doctorAuthData, setDoctorAuthData] = useState(null);
+  const [doctorLoading, setDoctorLoading] = useState(false);
+  const [aadhaarModalOpen, setAadhaarModalOpen] = useState(false);
+  const [aadhaarInput, setAadhaarInput] = useState("");
+  const [aadhaarStatusMsg, setAadhaarStatusMsg] = useState("");
+  const [sihDemoNotice, setSihDemoNotice] = useState("");
 
   // Production AI Chat States
   const [chatHistory, setChatHistory] = useState([
@@ -70,7 +99,179 @@ export default function MedIntelAI() {
     if (token) {
       fetchUserSession(token);
     }
+    fetchHdimsPatientRecords();
   }, []);
+
+  // Fetch HDIMS Unified Records
+  const fetchHdimsPatientRecords = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/hdims/patient/records`);
+      const data = await res.json();
+      if (data.success) {
+        if (data.patient) setHdimsPatient(data.patient);
+        setHdimsRecords(data);
+      }
+    } catch (e) {
+      console.warn("HDIMS records fetch warning:", e);
+    }
+  };
+
+  // QR Session Live Countdown Timer
+  useEffect(() => {
+    if (!qrSession?.expires_at) return;
+    const interval = setInterval(() => {
+      const remainingMs = new Date(qrSession.expires_at).getTime() - Date.now();
+      if (remainingMs <= 0) {
+        setQrCountdown("EXPIRED");
+        setQrSession(prev => prev ? { ...prev, status: "EXPIRED" } : null);
+        clearInterval(interval);
+      } else {
+        const mins = Math.floor(remainingMs / 60000);
+        const secs = Math.floor((remainingMs % 60000) / 1000);
+        setQrCountdown(`${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [qrSession]);
+
+  // Generate Temporary QR Token
+  const handleGenerateQR = async (dur = 10) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/hdims/qr/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration_minutes: dur, patient_id: hdimsPatient.patient_id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setQrSession(data.session);
+        setQrDuration(dur);
+        setQrInput(data.session.token);
+      }
+    } catch (e) {
+      alert("Failed to generate QR token.");
+    }
+  };
+
+  // Doctor Scans / Validates QR Token
+  const handleDoctorScanQR = async (tokenToScan) => {
+    const targetToken = tokenToScan || qrInput;
+    if (!targetToken || !targetToken.trim()) {
+      alert("Please enter or scan a valid QR session token.");
+      return;
+    }
+
+    setDoctorLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/hdims/qr/session/${targetToken.trim()}`);
+      const data = await res.json();
+      if (!data.success || !data.session) {
+        alert(data.error || "Invalid QR session token.");
+        setDoctorLoading(false);
+        return;
+      }
+
+      if (data.isExpired || data.session.status === "EXPIRED") {
+        alert("Session expired. Ask the patient to generate a new QR.");
+        setDoctorLoading(false);
+        return;
+      }
+
+      // If pending, prompt patient for consent first!
+      if (data.session.status === "PENDING") {
+        setConsentSessionData(data.session);
+        setConsentModalOpen(true);
+        setDoctorLoading(false);
+        return;
+      }
+
+      if (data.session.status !== "ALLOWED") {
+        alert("Patient has not granted access.");
+        setDoctorLoading(false);
+        return;
+      }
+
+      // Load authorized patient overview
+      const viewRes = await fetch(`${API_BASE}/api/hdims/doctor/patient-view/${targetToken.trim()}`);
+      const viewData = await viewRes.json();
+      if (viewData.success) {
+        setDoctorAuthData(viewData);
+        setCurrentPage('hdims_doctor');
+      } else {
+        alert(viewData.error || "Failed to load authorized patient record.");
+      }
+    } catch (e) {
+      alert("QR scan failed.");
+    } finally {
+      setDoctorLoading(false);
+    }
+  };
+
+  // Patient Consent Action (ALLOW ACCESS / DENY ACCESS)
+  const handlePatientConsent = async (status) => {
+    if (!consentSessionData) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/hdims/qr/consent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: consentSessionData.token, status }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setConsentModalOpen(false);
+        if (status === "ALLOWED") {
+          handleDoctorScanQR(consentSessionData.token);
+        } else {
+          alert("Access denied by patient.");
+        }
+      }
+    } catch (e) {
+      alert("Failed to update consent.");
+    }
+  };
+
+  // Revoke Access Session
+  const handleRevokeConsent = async () => {
+    try {
+      await fetch(`${API_BASE}/api/hdims/qr/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patient_id: hdimsPatient.patient_id }),
+      });
+      setDoctorAuthData(null);
+      setConsentModalOpen(false);
+      fetchHdimsPatientRecords();
+      alert("Active consent session revoked immediately.");
+    } catch (e) {
+      alert("Failed to revoke access.");
+    }
+  };
+
+  // Aadhaar Identity Verification Handler
+  const handleVerifyAadhaar = async (e) => {
+    e.preventDefault();
+    setAadhaarStatusMsg("");
+    try {
+      const res = await fetch(`${API_BASE}/api/hdims/patient/verify-aadhaar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aadhaar_number: aadhaarInput, patient_id: hdimsPatient.patient_id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setHdimsPatient(prev => ({ ...prev, aadhaar_verified: 1 }));
+        setAadhaarStatusMsg("✅ Verification Successful! Aadhaar identity verified. Raw number is not stored.");
+        setTimeout(() => {
+          setAadhaarModalOpen(false);
+          setAadhaarInput("");
+        }, 1800);
+      } else {
+        setAadhaarStatusMsg("❌ " + (data.error || "Aadhaar verification failed."));
+      }
+    } catch (e) {
+      setAadhaarStatusMsg("❌ Network error during verification.");
+    }
+  };
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -520,6 +721,9 @@ export default function MedIntelAI() {
               { id: 'home', label: 'Home', icon: Home },
               { id: 'upload', label: 'Analyze Report', icon: Upload },
               { id: 'analysis', label: 'Results', icon: BarChart3, disabled: !analysisResults },
+              { id: 'hdims_health', label: 'My Health', icon: ShieldCheck },
+              { id: 'hdims_qr', label: 'Share Record', icon: QrCode },
+              { id: 'hdims_doctor', label: 'Doctor Portal', icon: Stethoscope },
               { id: 'chat', label: 'AI Chat', icon: Brain },
             ].map(tab => (
               <button
@@ -616,6 +820,9 @@ export default function MedIntelAI() {
               { id: 'home', label: 'Home', icon: Home },
               { id: 'upload', label: 'Analyze Report', icon: Upload },
               { id: 'analysis', label: 'Results', icon: BarChart3, disabled: !analysisResults },
+              { id: 'hdims_health', label: 'My Health', icon: ShieldCheck },
+              { id: 'hdims_qr', label: 'Share Record', icon: QrCode },
+              { id: 'hdims_doctor', label: 'Doctor Portal', icon: Stethoscope },
               { id: 'chat', label: 'AI Chat', icon: Brain },
             ].map(tab => (
               <button
@@ -637,6 +844,56 @@ export default function MedIntelAI() {
           </div>
         </div>
       )}
+
+      {/* SIH DEMO CONTROL BAR */}
+      <div className={`border-b py-2.5 px-4 backdrop-blur-md sticky top-20 z-30 ${darkMode ? 'bg-slate-900/90 border-cyan-500/30 text-slate-200' : 'bg-cyan-50 border-cyan-200 text-slate-800'}`}>
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 font-bold text-cyan-400">
+            <Sparkles className="w-4 h-4 text-cyan-400" />
+            <span>SIH HDIMS DEMO BAR</span>
+            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+              Patient ID: {hdimsPatient.patient_id}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => { setDoctorRole(false); setCurrentPage('hdims_health'); }}
+              className={`px-3 py-1.5 rounded-xl font-semibold transition flex items-center gap-1.5 ${!doctorRole && currentPage === 'hdims_health' ? 'bg-cyan-500 text-white shadow-md' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" /> 1. Patient Health Profile
+            </button>
+            <button
+              onClick={() => { setDoctorRole(false); handleGenerateQR(10); setCurrentPage('hdims_qr'); }}
+              className={`px-3 py-1.5 rounded-xl font-semibold transition flex items-center gap-1.5 ${currentPage === 'hdims_qr' ? 'bg-cyan-500 text-white shadow-md' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}`}
+            >
+              <QrCode className="w-3.5 h-3.5" /> 2. Generate QR
+            </button>
+            <button
+              onClick={() => { setDoctorRole(true); setCurrentPage('hdims_doctor'); }}
+              className={`px-3 py-1.5 rounded-xl font-semibold transition flex items-center gap-1.5 ${doctorRole || currentPage === 'hdims_doctor' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}`}
+            >
+              <Stethoscope className="w-3.5 h-3.5" /> 3. Doctor Portal
+            </button>
+            <button
+              onClick={async () => {
+                await handleGenerateQR(10);
+                setCurrentPage('hdims_qr');
+                setSihDemoNotice("⚡ Demo Step 1: Temporary QR Generated! Now click '3. Doctor Portal' to simulate Doctor Scan.");
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold hover:shadow-lg transition flex items-center gap-1.5"
+            >
+              <Zap className="w-3.5 h-3.5" /> 1-Click SIH Full Journey Demo
+            </button>
+          </div>
+        </div>
+        {sihDemoNotice && (
+          <div className="max-w-7xl mx-auto mt-2 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 p-2 rounded-lg flex items-center justify-between">
+            <span>{sihDemoNotice}</span>
+            <button onClick={() => setSihDemoNotice("")} className="text-slate-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        )}
+      </div>
 
       {/* MAIN CONTENT AREA */}
       <main className="relative z-10">
@@ -1467,8 +1724,535 @@ export default function MedIntelAI() {
             </motion.div>
           )}
 
+          {/* HDIMS MY HEALTH PAGE */}
+          {currentPage === 'hdims_health' && (
+            <motion.div
+              key="hdims_health"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8"
+            >
+              {/* Header Profile Card */}
+              <div className={`p-6 sm:p-8 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                <div className="flex flex-wrap items-center justify-between gap-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-500 via-blue-500 to-indigo-600 flex items-center justify-center text-white font-extrabold text-2xl shadow-xl shadow-cyan-500/25">
+                      {hdimsPatient.full_name?.charAt(0) || 'A'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-2xl font-extrabold">{hdimsPatient.full_name}</h2>
+                        <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold font-mono">
+                          {hdimsPatient.patient_id}
+                        </span>
+                        {hdimsPatient.aadhaar_verified ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5" /> Aadhaar Verified
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setAadhaarModalOpen(true)}
+                            className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/30 transition flex items-center gap-1"
+                          >
+                            <AlertCircle className="w-3.5 h-3.5" /> Verify Identity
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">
+                        ABHA: <span className="font-mono text-cyan-300">{hdimsPatient.abha_id}</span> | DOB: {hdimsPatient.dob} ({hdimsPatient.gender})
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => { handleGenerateQR(10); setCurrentPage('hdims_qr'); }}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm shadow-lg shadow-cyan-500/20 hover:scale-[1.02] transition flex items-center gap-2"
+                    >
+                      <QrCode className="w-4 h-4" /> Share Record (QR)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Patient Vitals & Demographics */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-6 border-t border-white/10 text-left">
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Blood Group</p>
+                    <p className="text-sm font-bold text-rose-400">{hdimsPatient.blood_group}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Allergies</p>
+                    <p className="text-sm font-bold text-amber-400">{hdimsPatient.allergies}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Emergency Contact</p>
+                    <p className="text-sm font-bold text-slate-200">{hdimsPatient.emergency_contact}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Primary Health ID</p>
+                    <p className="text-sm font-bold text-cyan-400 font-mono">{hdimsPatient.patient_id}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Longitudinal Health Timeline & Active Gaps */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Timeline Column */}
+                <div className="lg:col-span-2 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                      <History className="w-5 h-5 text-cyan-400" /> Longitudinal Health Timeline
+                    </h3>
+                    <span className="text-xs text-slate-400">Database-driven records</span>
+                  </div>
+
+                  <div className="space-y-4 relative before:absolute before:left-6 before:top-3 before:bottom-3 before:w-0.5 before:bg-cyan-500/20">
+                    {(hdimsRecords?.timeline || []).map((item, i) => (
+                      <div key={i} className={`relative pl-12 p-4 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                        <div className="absolute left-4 top-5 w-4 h-4 rounded-full bg-cyan-500 border-4 border-slate-950 shadow-md" />
+                        <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                          <span className="text-xs font-mono font-bold text-cyan-400">{item.event_date}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            item.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-300' :
+                            item.status === 'ABNORMAL' ? 'bg-rose-500/20 text-rose-300' :
+                            item.status === 'DUE' ? 'bg-amber-500/20 text-amber-300' : 'bg-cyan-500/20 text-cyan-300'
+                          }`}>
+                            {item.event_type} • {item.status}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-sm">{item.title}</h4>
+                        <p className={`text-xs mt-1 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{item.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Side Column: Referrals, Follow-ups, Access Log */}
+                <div className="space-y-6">
+                  {/* Referrals */}
+                  <div className={`p-5 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                    <h4 className="text-sm font-bold text-cyan-400 mb-3 flex items-center gap-2">
+                      <ExternalLink className="w-4 h-4" /> Specialist Referrals
+                    </h4>
+                    <div className="space-y-3">
+                      {(hdimsRecords?.referrals || []).map((ref, idx) => (
+                        <div key={idx} className="p-3 rounded-xl bg-slate-900/60 border border-white/5 text-xs">
+                          <div className="flex justify-between font-bold">
+                            <span>{ref.specialist_type}</span>
+                            <span className="text-cyan-400">{ref.status}</span>
+                          </div>
+                          <p className="text-slate-400 mt-1">{ref.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Follow-ups */}
+                  <div className={`p-5 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                    <h4 className="text-sm font-bold text-amber-400 mb-3 flex items-center gap-2">
+                      <Clock className="w-4 h-4" /> Follow-ups & Care Reminders
+                    </h4>
+                    <div className="space-y-3">
+                      {(hdimsRecords?.followUps || []).map((f, idx) => (
+                        <div key={idx} className="p-3 rounded-xl bg-slate-900/60 border border-white/5 text-xs">
+                          <div className="flex justify-between font-bold">
+                            <span>{f.condition}</span>
+                            <span className={f.status === 'DUE' ? 'text-rose-400' : 'text-emerald-400'}>{f.status}</span>
+                          </div>
+                          <p className="text-slate-400 mt-1">Due: {f.recommended_date} ({f.doctor_name})</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Access Log */}
+                  <div className={`p-5 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="text-sm font-bold text-indigo-400 flex items-center gap-2">
+                        <History className="w-4 h-4" /> Record Access Log
+                      </h4>
+                      <button onClick={handleRevokeConsent} className="text-[10px] text-rose-400 font-bold hover:underline">Revoke All</button>
+                    </div>
+                    <div className="space-y-2">
+                      {(hdimsRecords?.accessLogs || []).map((log, idx) => (
+                        <div key={idx} className="p-2.5 rounded-xl bg-slate-900/60 border border-white/5 text-xs flex justify-between">
+                          <div>
+                            <p className="font-bold">{log.doctor_name}</p>
+                            <p className="text-[10px] text-slate-400">{log.hospital_name} • {log.purpose}</p>
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-400">{log.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* HDIMS SHARE RECORD (TEMPORARY QR) PAGE */}
+          {currentPage === 'hdims_qr' && (
+            <motion.div
+              key="hdims_qr"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center"
+            >
+              <div className={`p-8 sm:p-12 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center mx-auto mb-4 text-cyan-400">
+                  <QrCode className="w-8 h-8" />
+                </div>
+                <h2 className="text-3xl font-extrabold mb-2">Share Authorized Health Record</h2>
+                <p className="text-xs text-slate-400 max-w-md mx-auto mb-6">
+                  Generates a temporary session token for doctor access. <strong className="text-cyan-300">DO NOT put actual medical records inside the QR code.</strong>
+                </p>
+
+                {/* Expiry Duration Selection */}
+                <div className="flex justify-center gap-3 mb-8">
+                  {[5, 10, 30].map(dur => (
+                    <button
+                      key={dur}
+                      onClick={() => handleGenerateQR(dur)}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition border ${
+                        qrDuration === dur
+                          ? 'bg-cyan-500 text-white border-cyan-400 shadow-md'
+                          : 'bg-slate-900/60 border-white/10 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      {dur} Minutes Expiry
+                    </button>
+                  ))}
+                </div>
+
+                {/* SVG QR Code Simulation */}
+                {qrSession ? (
+                  <div className="space-y-6">
+                    <div className="w-56 h-56 bg-white p-4 rounded-3xl shadow-2xl mx-auto flex flex-col items-center justify-center border-4 border-cyan-500/40 relative group">
+                      <svg className="w-full h-full text-slate-900" viewBox="0 0 100 100" fill="currentColor">
+                        <rect x="5" y="5" width="25" height="25" fill="#0f172a" />
+                        <rect x="10" y="10" width="15" height="15" fill="#ffffff" />
+                        <rect x="13" y="13" width="9" height="9" fill="#0f172a" />
+
+                        <rect x="70" y="5" width="25" height="25" fill="#0f172a" />
+                        <rect x="75" y="10" width="15" height="15" fill="#ffffff" />
+                        <rect x="78" y="13" width="9" height="9" fill="#0f172a" />
+
+                        <rect x="5" y="70" width="25" height="25" fill="#0f172a" />
+                        <rect x="10" y="75" width="15" height="15" fill="#ffffff" />
+                        <rect x="13" y="78" width="9" height="9" fill="#0f172a" />
+
+                        <rect x="35" y="10" width="8" height="8" />
+                        <rect x="48" y="15" width="12" height="8" />
+                        <rect x="35" y="35" width="30" height="30" fill="#0284c7" />
+                        <rect x="70" y="45" width="10" height="20" />
+                        <rect x="45" y="75" width="20" height="10" />
+                        <rect x="75" y="75" width="15" height="15" />
+                      </svg>
+                      <span className="absolute bottom-2 text-[9px] font-bold font-mono text-slate-700 bg-white/90 px-2 py-0.5 rounded">
+                        {qrSession.token}
+                      </span>
+                    </div>
+
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold">
+                      <Clock className="w-4 h-4 animate-spin text-cyan-400" />
+                      <span>Live Countdown: {qrCountdown || '10:00'}</span>
+                    </div>
+
+                    <div className="max-w-md mx-auto p-4 rounded-2xl bg-slate-900/80 border border-white/10 text-left text-xs space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Patient ID:</span>
+                        <span className="font-bold font-mono text-cyan-400">{qrSession.patient_id}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Token Status:</span>
+                        <span className="font-bold text-emerald-400">{qrSession.status}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Secure Protocol:</span>
+                        <span className="font-bold text-slate-200">Consent-Gated Token (No Raw Health Data)</span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-center gap-3">
+                      <button
+                        onClick={() => handleDoctorScanQR(qrSession.token)}
+                        className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold text-sm shadow-lg hover:scale-105 transition flex items-center gap-2"
+                      >
+                        <Stethoscope className="w-4 h-4" /> Simulate Doctor Scan & Consent
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleGenerateQR(10)}
+                    className="px-8 py-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-lg shadow-xl hover:scale-105 transition"
+                  >
+                    Generate Temporary Health QR Token
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* HDIMS DOCTOR PORTAL PAGE */}
+          {currentPage === 'hdims_doctor' && (
+            <motion.div
+              key="hdims_doctor"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8"
+            >
+              {/* Doctor Header Banner */}
+              <div className={`p-6 rounded-3xl border flex flex-wrap items-center justify-between gap-4 ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                    <Stethoscope className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold">Dr. Ankit Sharma</h2>
+                    <p className="text-xs text-slate-400">Cardiologist • City General Hospital (ID: MI-DOC-8801)</p>
+                  </div>
+                </div>
+
+                {/* Scan / Enter QR Input */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={qrInput}
+                    onChange={e => setQrInput(e.target.value)}
+                    placeholder="Enter Patient Session Token (e.g. MI-QR-XXXX)"
+                    className={`px-4 py-2.5 rounded-xl border text-xs font-mono outline-none w-64 ${darkMode ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
+                  />
+                  <button
+                    onClick={() => handleDoctorScanQR()}
+                    disabled={doctorLoading}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-500 transition flex items-center gap-2"
+                  >
+                    <QrCode className="w-4 h-4" /> {doctorLoading ? 'Scanning...' : 'Scan / Access'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Authorized Patient Data Overview */}
+              {doctorAuthData ? (
+                <div className="space-y-8">
+                  {/* AI Clinical Brief Card */}
+                  <div className={`p-6 rounded-3xl border border-indigo-500/30 ${darkMode ? 'bg-indigo-950/20' : 'bg-indigo-50'}`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-bold text-base text-indigo-400 flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-indigo-400" /> AI Clinical Brief
+                      </h3>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono">
+                        Patient: {doctorAuthData.patient.patient_id}
+                      </span>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-200 mb-3">{doctorAuthData.aiClinicalBrief.summary}</p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5">
+                        <p className="font-bold text-slate-400 mb-1">Reported Information:</p>
+                        <ul className="list-disc list-inside space-y-1 text-slate-300">
+                          {doctorAuthData.aiClinicalBrief.reportedInformation.map((info, idx) => (
+                            <li key={idx}>{info}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5">
+                        <p className="font-bold text-slate-400 mb-1">AI Interpretation:</p>
+                        <p className="text-slate-300">{doctorAuthData.aiClinicalBrief.aiInterpretation}</p>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 italic mt-3">
+                      ⚠️ {doctorAuthData.aiClinicalBrief.disclaimer}
+                    </p>
+                  </div>
+
+                  {/* Continuity Gap Detection Engine */}
+                  <div className={`p-6 rounded-3xl border border-amber-500/30 ${darkMode ? 'bg-amber-950/20' : 'bg-amber-50'}`}>
+                    <h3 className="font-bold text-base text-amber-400 flex items-center gap-2 mb-3">
+                      <AlertTriangle className="w-5 h-5 text-amber-400" /> Continuity Intelligence (Care Gap Analysis)
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {doctorAuthData.continuityGaps.map(gap => (
+                        <div key={gap.id} className="p-4 rounded-2xl bg-slate-900/80 border border-amber-500/30 text-xs space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-amber-300">{gap.title}</span>
+                            <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold text-[10px]">{gap.severity} SEVERITY</span>
+                          </div>
+                          <p className="text-slate-300">{gap.description}</p>
+                          <p className="text-cyan-400 font-semibold pt-1">Recommended Action: {gap.actionable}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Authorized Reports & Patient Timeline */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                      <h4 className="font-bold text-base mb-4 flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-cyan-400" /> Medical Reports & AI Key Findings
+                      </h4>
+                      <div className="space-y-3">
+                        {doctorAuthData.reports.map(r => (
+                          <div key={r.id} className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between text-xs">
+                            <div>
+                              <p className="font-bold text-slate-200">{r.filename}</p>
+                              <p className="text-slate-400">{r.created_at} • Health Score: {r.health_score}/100</p>
+                            </div>
+                            <button
+                              onClick={() => { setAnalysisResults(r.analysis); setCurrentPage('analysis'); }}
+                              className="px-3 py-1.5 rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold hover:bg-cyan-500/30 transition"
+                            >
+                              View Original Report
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                      <h4 className="font-bold text-base mb-4 flex items-center gap-2">
+                        <History className="w-5 h-5 text-indigo-400" /> Authorized Health Timeline
+                      </h4>
+                      <div className="space-y-3">
+                        {doctorAuthData.timeline.map((t, idx) => (
+                          <div key={idx} className="p-3 rounded-xl bg-slate-900/60 border border-white/5 text-xs flex justify-between items-center">
+                            <div>
+                              <p className="font-bold text-slate-200">{t.title}</p>
+                              <p className="text-slate-400">{t.event_date} • {t.description}</p>
+                            </div>
+                            <span className="text-[10px] font-bold text-cyan-400">{t.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Doctor Dashboard Cards */
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {[
+                    { title: "Patients Today", val: "14", desc: "Scheduled consultations", color: "text-cyan-400" },
+                    { title: "Pending Referrals", val: "3", desc: "Awaiting specialist review", color: "text-amber-400" },
+                    { title: "Follow-ups Due", val: "2", desc: "Action required this week", color: "text-rose-400" },
+                    { title: "Continuity Alerts", val: "2", desc: "Care gap warnings identified", color: "text-indigo-400" },
+                  ].map((card, i) => (
+                    <div key={i} className={`p-6 rounded-3xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
+                      <p className="text-xs font-semibold text-slate-400 uppercase">{card.title}</p>
+                      <p className={`text-3xl font-extrabold my-2 ${card.color}`}>{card.val}</p>
+                      <p className="text-xs text-slate-400">{card.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
         </AnimatePresence>
       </main>
+
+      {/* PATIENT CONSENT PROMPT MODAL */}
+      {consentModalOpen && consentSessionData && (
+        <div className="fixed inset-0 backdrop-blur-md bg-black/70 z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`w-full max-w-lg p-8 rounded-3xl border shadow-2xl relative ${darkMode ? 'glass-modal-dark text-white' : 'glass-modal-light text-slate-900'}`}
+          >
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center mx-auto mb-3 text-white shadow-xl">
+                <ShieldCheck className="w-7 h-7" />
+              </div>
+              <h3 className="text-2xl font-extrabold">Patient Access Consent Requested</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                A doctor is requesting temporary access to your health record.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/10 text-xs space-y-2 mb-6">
+              <p><strong className="text-slate-400">Doctor:</strong> Dr. Ankit Sharma (Cardiologist)</p>
+              <p><strong className="text-slate-400">Hospital:</strong> City General Hospital</p>
+              <p><strong className="text-slate-400">Purpose:</strong> Clinical Review & Consultation</p>
+              <p><strong className="text-slate-400">Duration:</strong> {consentSessionData.duration_minutes || 10} Minutes</p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => handlePatientConsent("ALLOWED")}
+                className="flex-1 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg transition"
+              >
+                ALLOW ACCESS
+              </button>
+              <button
+                onClick={() => handlePatientConsent("DENIED")}
+                className="flex-1 py-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm shadow-lg transition"
+              >
+                DENY ACCESS
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* SIMULATED AADHAAR VERIFICATION MODAL */}
+      {aadhaarModalOpen && (
+        <div className="fixed inset-0 backdrop-blur-md bg-black/70 z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`w-full max-w-md p-8 rounded-3xl border shadow-2xl relative ${darkMode ? 'glass-modal-dark text-white' : 'glass-modal-light text-slate-900'}`}
+          >
+            <button
+              onClick={() => setAadhaarModalOpen(false)}
+              className="absolute top-6 right-6 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mx-auto mb-3 text-cyan-400">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-extrabold">Simulated Aadhaar Identity Verification</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Verifies patient identity and generates MedIntel Patient ID. <strong className="text-cyan-300">Raw Aadhaar numbers are never stored.</strong>
+              </p>
+            </div>
+
+            {aadhaarStatusMsg && (
+              <p className="text-xs font-bold text-center mb-4">{aadhaarStatusMsg}</p>
+            )}
+
+            <form onSubmit={handleVerifyAadhaar} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-400 mb-1 block">12-Digit Aadhaar Number</label>
+                <input
+                  type="text"
+                  maxLength={14}
+                  required
+                  value={aadhaarInput}
+                  onChange={e => setAadhaarInput(e.target.value)}
+                  placeholder="5830 1928 4029"
+                  className={`w-full px-4 py-3 rounded-xl border text-sm font-mono outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm shadow-lg hover:scale-[1.02] transition"
+              >
+                Verify Identity & Generate Patient ID
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
 
       {/* FIGMA GLASSMORPHISM AUTHENTICATION MODAL */}
       {authModalOpen && (

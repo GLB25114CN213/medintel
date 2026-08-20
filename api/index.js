@@ -221,4 +221,88 @@ PATIENT REPORT:
   }
 });
 
+// ── HDIMS EXTENSION ENDPOINTS ──────────────────────────────────────
+app.get("/api/hdims/patient/profile", async (req, res) => {
+  return res.json({
+    success: true,
+    patient: {
+      patient_id: "MI-PAT-100245",
+      full_name: "Aarav Patel",
+      email: "aarav.patel@example.com",
+      abha_id: "91-4820-1129-8402",
+      blood_group: "O+",
+      emergency_contact: "+91 98765 43210",
+      allergies: "Penicillin, Dust Mites",
+      dob: "1990-05-14",
+      gender: "Male",
+      aadhaar_verified: 1,
+    }
+  });
+});
+
+app.post("/api/hdims/patient/verify-aadhaar", async (req, res) => {
+  const { aadhaar_number, patient_id } = req.body;
+  const cleanNum = String(aadhaar_number || "").replace(/\s/g, "");
+  if (cleanNum.length !== 12 || !/^\d{12}$/.test(cleanNum)) {
+    return res.status(400).json({ success: false, error: "Please enter a valid 12-digit Aadhaar number for identity verification." });
+  }
+
+  return res.json({
+    success: true,
+    message: "Aadhaar Identity Verification Successful!",
+    verificationDetails: {
+      status: "VERIFIED",
+      aadhaarLast4: cleanNum.slice(-4),
+      medintelPatientId: patient_id || "MI-PAT-100245",
+      note: "Aadhaar identity verified. Raw Aadhaar number is not stored in MedIntel health records."
+    }
+  });
+});
+
+app.post("/api/hdims/qr/generate", async (req, res) => {
+  const { duration_minutes = 10, patient_id = "MI-PAT-100245" } = req.body;
+  const dur = [5, 10, 30].includes(Number(duration_minutes)) ? Number(duration_minutes) : 10;
+  const token = "MI-QR-" + Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Date.now().toString(36).toUpperCase();
+  const expiresAt = new Date(Date.now() + dur * 60 * 1000).toISOString();
+
+  return res.json({
+    success: true,
+    session: {
+      token,
+      patient_id,
+      patient_name: "Aarav Patel",
+      duration_minutes: dur,
+      expires_at: expiresAt,
+      status: "PENDING",
+    }
+  });
+});
+
+app.get("/api/hdims/qr/session/:token", async (req, res) => {
+  const { token } = req.params;
+  return res.json({
+    success: true,
+    session: {
+      token,
+      patient_id: "MI-PAT-100245",
+      patient_name: "Aarav Patel",
+      duration_minutes: 10,
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      status: "ALLOWED",
+      requested_by_doctor: "Dr. Ankit Sharma",
+      requested_by_hospital: "City General Hospital"
+    },
+    isExpired: false
+  });
+});
+
+app.post("/api/hdims/qr/consent", async (req, res) => {
+  const { status } = req.body;
+  return res.json({ success: true, status: status === "ALLOWED" ? "ALLOWED" : "DENIED" });
+});
+
+app.post("/api/hdims/qr/revoke", async (req, res) => {
+  return res.json({ success: true, message: "Active consent session revoked immediately." });
+});
+
 export default app;

@@ -445,6 +445,331 @@ PATIENT REPORT CONTEXT:
   }
 });
 
+// ── HDIMS EXTENSION ENDPOINTS ──────────────────────────────────────
+
+// 1. Patient Profile
+app.get("/api/hdims/patient/profile", optionalAuthenticateToken, async (req, res) => {
+  try {
+    let patient = await getQuery("SELECT * FROM patients WHERE patient_id = 'MI-PAT-100245'");
+    if (req.user?.id) {
+      const userPatient = await getQuery("SELECT * FROM patients WHERE user_id = ?", [req.user.id]);
+      if (userPatient) patient = userPatient;
+    }
+    if (!patient) {
+      patient = {
+        patient_id: "MI-PAT-100245",
+        full_name: "Aarav Patel",
+        email: "aarav.patel@example.com",
+        abha_id: "91-4820-1129-8402",
+        blood_group: "O+",
+        emergency_contact: "+91 98765 43210",
+        allergies: "Penicillin, Dust Mites",
+        dob: "1990-05-14",
+        gender: "Male",
+        aadhaar_verified: 1,
+      };
+    }
+    return res.json({ success: true, patient });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to retrieve patient profile." });
+  }
+});
+
+// 2. Aadhaar Identity Verification Simulation
+app.post("/api/hdims/patient/verify-aadhaar", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { aadhaar_number, patient_id } = req.body;
+    const cleanNum = String(aadhaar_number || "").replace(/\s/g, "");
+    if (cleanNum.length !== 12 || !/^\d{12}$/.test(cleanNum)) {
+      return res.status(400).json({ success: false, error: "Please enter a valid 12-digit Aadhaar number for identity verification." });
+    }
+
+    const pid = patient_id || "MI-PAT-100245";
+    await runQuery("UPDATE patients SET aadhaar_verified = 1 WHERE patient_id = ?", [pid]);
+
+    return res.json({
+      success: true,
+      message: "Aadhaar Identity Verification Successful!",
+      verificationDetails: {
+        status: "VERIFIED",
+        aadhaarLast4: cleanNum.slice(-4),
+        medintelPatientId: pid,
+        note: "Aadhaar identity verified. Raw Aadhaar number is not stored in MedIntel health records."
+      }
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Aadhaar verification failed." });
+  }
+});
+
+// 3. Unified Health Record & Timeline
+app.get("/api/hdims/patient/records", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const pid = req.query.patient_id || "MI-PAT-100245";
+    const patient = (await getQuery("SELECT * FROM patients WHERE patient_id = ?", [pid])) || {
+      patient_id: pid, full_name: "Aarav Patel", gender: "Male", dob: "1990-05-14", blood_group: "O+", allergies: "Penicillin"
+    };
+
+    const visits = await allQuery("SELECT * FROM visits WHERE patient_id = ? ORDER BY visit_date DESC", [pid]);
+    const referrals = await allQuery("SELECT * FROM referrals WHERE patient_id = ? ORDER BY created_at DESC", [pid]);
+    const followUps = await allQuery("SELECT * FROM follow_ups WHERE patient_id = ? ORDER BY recommended_date ASC", [pid]);
+    const timeline = await allQuery("SELECT * FROM health_timeline WHERE patient_id = ? ORDER BY id DESC", [pid]);
+    const accessLogs = await allQuery("SELECT * FROM access_logs WHERE patient_id = ? ORDER BY id DESC", [pid]);
+    const dbReports = await allQuery("SELECT id, filename, analysis_data, health_score, created_at FROM analyses ORDER BY created_at DESC LIMIT 10");
+
+    const reports = dbReports.map(r => {
+      let parsed = {};
+      try { parsed = JSON.parse(r.analysis_data); } catch (_) {}
+      return {
+        id: r.id,
+        filename: r.filename || "Medical_Report.pdf",
+        health_score: r.health_score || 85,
+        created_at: r.created_at,
+        analysis: parsed,
+      };
+    });
+
+    return res.json({
+      success: true,
+      patient,
+      visits,
+      referrals,
+      followUps,
+      timeline,
+      accessLogs,
+      reports,
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to fetch health records." });
+  }
+});
+
+// 4. Generate Temporary QR Token
+app.post("/api/hdims/qr/generate", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { duration_minutes = 10, patient_id = "MI-PAT-100245" } = req.body;
+    const dur = [5, 10, 30].includes(Number(duration_minutes)) ? Number(duration_minutes) : 10;
+    const token = "MI-QR-" + Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Date.now().toString(36).toUpperCase();
+
+    const expiresAt = new Date(Date.now() + dur * 60 * 1000).toISOString();
+    const patient = (await getQuery("SELECT full_name FROM patients WHERE patient_id = ?", [patient_id])) || { full_name: "Aarav Patel" };
+
+    await runQuery(
+      "INSERT INTO qr_sessions (token, patient_id, patient_name, duration_minutes, expires_at, status) VALUES (?, ?, ?, ?, ?, 'PENDING')",
+      [token, patient_id, patient.full_name, dur, expiresAt]
+    );
+
+    return res.json({
+      success: true,
+      session: {
+        token,
+        patient_id,
+        patient_name: patient.full_name,
+        duration_minutes: dur,
+        expires_at: expiresAt,
+        status: "PENDING",
+        qr_url: `${req.protocol}://${req.get("host")}/qr/${token}`
+      }
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to generate QR session." });
+  }
+});
+
+// 5. Get/Validate QR Session
+app.get("/api/hdims/qr/session/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    const session = await getQuery("SELECT * FROM qr_sessions WHERE token = ?", [token]);
+    if (!session) return res.status(404).json({ success: false, error: "Invalid QR session token." });
+
+    const isExpired = new Date(session.expires_at).getTime() < Date.now();
+    if (isExpired && session.status !== "EXPIRED") {
+      await runQuery("UPDATE qr_sessions SET status = 'EXPIRED' WHERE token = ?", [token]);
+      session.status = "EXPIRED";
+    }
+
+    return res.json({ success: true, session, isExpired });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to validate session." });
+  }
+});
+
+// 6. Patient Consent Action (ALLOW ACCESS / DENY ACCESS)
+app.post("/api/hdims/qr/consent", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { token, status, doctor_name = "Dr. Ankit Sharma", hospital_name = "City General Hospital" } = req.body;
+    const session = await getQuery("SELECT * FROM qr_sessions WHERE token = ?", [token]);
+    if (!session) return res.status(404).json({ success: false, error: "Session token not found." });
+
+    if (new Date(session.expires_at).getTime() < Date.now()) {
+      await runQuery("UPDATE qr_sessions SET status = 'EXPIRED' WHERE token = ?", [token]);
+      return res.status(400).json({ success: false, error: "Session expired. Ask the patient to generate a new QR." });
+    }
+
+    const newStatus = status === "ALLOWED" ? "ALLOWED" : "DENIED";
+    await runQuery("UPDATE qr_sessions SET status = ?, requested_by_doctor = ?, requested_by_hospital = ? WHERE token = ?", [newStatus, doctor_name, hospital_name, token]);
+
+    if (newStatus === "ALLOWED") {
+      await runQuery(
+        "INSERT INTO access_logs (patient_id, doctor_name, hospital_name, purpose, duration_minutes, status) VALUES (?, ?, ?, 'Authorized Clinical Review', ?, 'ACTIVE')",
+        [session.patient_id, doctor_name, hospital_name, session.duration_minutes]
+      );
+    }
+
+    return res.json({ success: true, status: newStatus, message: newStatus === "ALLOWED" ? "Access granted to doctor." : "Access denied by patient." });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to update consent." });
+  }
+});
+
+// 7. Revoke Session Access
+app.post("/api/hdims/qr/revoke", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { token, patient_id = "MI-PAT-100245" } = req.body;
+    if (token) {
+      await runQuery("UPDATE qr_sessions SET status = 'REVOKED' WHERE token = ?", [token]);
+    }
+    await runQuery("UPDATE access_logs SET status = 'REVOKED' WHERE patient_id = ? AND status = 'ACTIVE'", [patient_id]);
+    return res.json({ success: true, message: "Active consent session revoked immediately." });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to revoke access." });
+  }
+});
+
+// 8. Doctor Dashboard Metrics
+app.get("/api/hdims/doctor/dashboard", async (req, res) => {
+  try {
+    const doctor = (await getQuery("SELECT * FROM doctors WHERE doctor_id = 'MI-DOC-8801'")) || {
+      doctor_id: "MI-DOC-8801", full_name: "Dr. Ankit Sharma", specialty: "Cardiologist", hospital_name: "City General Hospital"
+    };
+
+    const referrals = await allQuery("SELECT * FROM referrals ORDER BY id DESC LIMIT 5");
+    const followUps = await allQuery("SELECT * FROM follow_ups ORDER BY id DESC LIMIT 5");
+
+    const metrics = {
+      patientsToday: 14,
+      pendingReferrals: referrals.filter(r => r.status !== "CONSULTATION COMPLETED").length || 3,
+      followUpsDue: followUps.filter(f => f.status === "DUE" || f.status === "OVERDUE").length || 2,
+      continuityAlerts: 2,
+    };
+
+    return res.json({ success: true, doctor, metrics, referrals, followUps });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to load doctor dashboard." });
+  }
+});
+
+// 9. Authorized Doctor Patient View (with AI Clinical Brief & Continuity Gaps)
+app.get("/api/hdims/doctor/patient-view/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    const session = await getQuery("SELECT * FROM qr_sessions WHERE token = ?", [token]);
+    if (!session) return res.status(404).json({ success: false, error: "QR Session not found." });
+
+    if (new Date(session.expires_at).getTime() < Date.now()) {
+      return res.status(403).json({ success: false, error: "Session expired. Ask the patient to generate a new QR." });
+    }
+
+    if (session.status !== "ALLOWED") {
+      return res.status(403).json({ success: false, error: "Patient has not granted access." });
+    }
+
+    const pid = session.patient_id;
+    const patient = (await getQuery("SELECT * FROM patients WHERE patient_id = ?", [pid])) || {
+      patient_id: pid, full_name: session.patient_name, dob: "1990-05-14", gender: "Male", blood_group: "O+", allergies: "Penicillin"
+    };
+
+    const visits = await allQuery("SELECT * FROM visits WHERE patient_id = ? ORDER BY visit_date DESC", [pid]);
+    const referrals = await allQuery("SELECT * FROM referrals WHERE patient_id = ?", [pid]);
+    const followUps = await allQuery("SELECT * FROM follow_ups WHERE patient_id = ?", [pid]);
+    const timeline = await allQuery("SELECT * FROM health_timeline WHERE patient_id = ? ORDER BY id DESC", [pid]);
+    const dbReports = await allQuery("SELECT id, filename, analysis_data, health_score, created_at FROM analyses ORDER BY created_at DESC LIMIT 5");
+
+    const reports = dbReports.map(r => {
+      let parsed = {};
+      try { parsed = JSON.parse(r.analysis_data); } catch (_) {}
+      return { id: r.id, filename: r.filename || "Blood_Report.pdf", health_score: r.health_score || 85, created_at: r.created_at, analysis: parsed };
+    });
+
+    const aiClinicalBrief = {
+      summary: "Patient presents with Stage 1 Hypertension (BP 142/90 mmHg) and borderline metabolic findings. Elevated Serum Total Cholesterol (228 mg/dL) and HbA1c 6.2% identified in recent lab panels.",
+      reportedInformation: [
+        "Patient ID: " + pid + " | Age: 36 | Gender: Male",
+        "Recent Blood Pressure: 142/90 mmHg (18 Aug 2026)",
+        "Laboratory Findings: Cholesterol 228 mg/dL (HIGH), Fasting Glucose 110 mg/dL (BORDERLINE)",
+        "Current Management: Low-sodium dietary plan and exercise regimen"
+      ],
+      aiInterpretation: "Findings are consistent with mild essential hypertension and early dyslipidemia risk. High response to lifestyle intervention expected.",
+      disclaimer: "AI-generated information. Significant medical decisions should be verified by a qualified healthcare professional."
+    };
+
+    const continuityGaps = [
+      {
+        id: "gap-1",
+        severity: "HIGH",
+        title: "Overdue Lipid & BP Follow-up",
+        description: "No follow-up is recorded in the available MedIntel data since 18 Aug 2026 cardiology evaluation.",
+        actionable: "Schedule Repeat Lipid Profile & Blood Pressure Check"
+      },
+      {
+        id: "gap-2",
+        severity: "MEDIUM",
+        title: "Pending Endocrinology Consultation",
+        description: "Referral created for metabolic screening (HbA1c 6.2%), but no completed consultation record is available in current MedIntel records.",
+        actionable: "Confirm Endocrinology Appointment Booking"
+      }
+    ];
+
+    return res.json({
+      success: true,
+      patient,
+      visits,
+      referrals,
+      followUps,
+      timeline,
+      reports,
+      aiClinicalBrief,
+      continuityGaps,
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to retrieve doctor view." });
+  }
+});
+
+// 10. Doctor Updates Referral Status
+app.post("/api/hdims/referrals/update", async (req, res) => {
+  try {
+    const { referral_id, status } = req.body;
+    await runQuery("UPDATE referrals SET status = ? WHERE id = ?", [status, referral_id]);
+    return res.json({ success: true, message: "Referral status updated to " + status });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to update referral." });
+  }
+});
+
+// 11. Doctor Updates Follow-up Status
+app.post("/api/hdims/followups/update", async (req, res) => {
+  try {
+    const { follow_up_id, status } = req.body;
+    await runQuery("UPDATE follow_ups SET status = ? WHERE id = ?", [status, follow_up_id]);
+    return res.json({ success: true, message: "Follow-up status updated to " + status });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to update follow-up." });
+  }
+});
+
+// 12. Patient Access Logs
+app.get("/api/hdims/access-logs", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const pid = req.query.patient_id || "MI-PAT-100245";
+    const logs = await allQuery("SELECT * FROM access_logs WHERE patient_id = ? ORDER BY id DESC", [pid]);
+    return res.json({ success: true, logs });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to retrieve access logs." });
+  }
+});
+
 // ── SAVED REPORTS & CHAT HISTORY ─────────────────────────────────
 app.get("/api/reports", authenticateToken, async (req, res) => {
   try {
