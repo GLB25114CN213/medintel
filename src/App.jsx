@@ -267,11 +267,11 @@ export default function MedIntelAI() {
           testType: cleanValue(pInfo.testType || data.analysis.reportType || data.analysis.testType, "Diagnostic Panel")
         },
 
-        section2_table: (data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => ({
+        section2_table: (data.analysis.findings || data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => ({
           testName: b.testName || b.name,
           result: b.result || b.value,
           unit: b.unit || "",
-          referenceRange: b.referenceRange || b.normalRange || "Not Provided",
+          referenceRange: b.reference_range || b.referenceRange || b.normalRange || "Not Provided",
           status: (b.status || "normal").toUpperCase()
         })),
 
@@ -318,12 +318,12 @@ export default function MedIntelAI() {
         riskLevel: computedRiskLevel,
         summaryPatientFriendly: computedSummary,
         summaryTechnical: computedTechnical,
-        biomarkers: (data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => {
+        biomarkers: (data.analysis.findings || data.analysis.section2_testSummaryTable || data.analysis.biomarkers || []).map(b => {
           let st = (b.status || "normal").toLowerCase();
           const name = b.testName || b.name || "Test Parameter";
           const valStr = String(b.result || b.value || "");
           const valNum = parseFloat(valStr.replace(/,/g, ""));
-          const rangeStr = String(b.referenceRange || b.normalRange || "");
+          const rangeStr = String(b.reference_range || b.referenceRange || b.normalRange || "");
 
           // Fallback auto-evaluator if status was normal/missing but numbers exceed printed range bounds
           if (!isNaN(valNum) && rangeStr && (st === "normal" || st === "unknown" || !st)) {
@@ -358,9 +358,9 @@ export default function MedIntelAI() {
             name: name,
             value: b.result || b.value,
             unit: b.unit || "",
-            normalRange: b.referenceRange || b.normalRange || "Not Provided",
+            normalRange: b.reference_range || b.referenceRange || b.normalRange || "Not Provided",
             status: st,
-            significance: b.clinicalSignificance || b.meaning || b.explanation || b.significance || dynamicFallback,
+            significance: b.interpretation || b.clinicalSignificance || b.meaning || b.explanation || b.significance || dynamicFallback,
           };
         }),
         diagnoses: (data.analysis.patterns || []).map(p => ({
