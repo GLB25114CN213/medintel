@@ -124,7 +124,80 @@ Return ONLY a valid JSON object (no markdown fences, pure JSON) with this exact 
     "lifestyleMeasures": ["<recommendation>"],
     "specialistConsultation": "<specialist e.g. Radiologist / General Physician / Cardiologist>"
   },
-  "section7_easyExplanation": "<Plain-language patient explanation>",
-  "disclaimer": "This AI analysis is for educational purposes only. Always consult a qualified medical professional."
+export function buildFastExtractionPrompt(ocrText) {
+  return `You are a medical report fast extraction system.
+
+Your task is to QUICKLY extract raw test parameters and patient info from the medical document text below.
+Do NOT calculate status or interpretations yet. Just extract the raw names, values, units, and printed reference ranges.
+
+EXTRACTED DOCUMENT TEXT:
+"""
+${ocrText || "Analyse the attached medical report image."}
+"""
+
+Return ONLY valid JSON (no markdown fences) with this structure:
+{
+  "isMedicalReport": true,
+  "report_type": "<identified report type, e.g. Complete Blood Count, LFT, MRI, ECG>",
+  "patient": {
+    "name": "<patient name or null>",
+    "age": "<age or null>",
+    "sex": "<sex or null>",
+    "patient_id": "<patient ID or null>"
+  },
+  "report_date": "<date or null>",
+  "findings": [
+    {
+      "name": "<exact parameter name>",
+      "value": "<measured value>",
+      "unit": "<unit or empty>",
+      "reference_range": "<printed reference range or empty>"
+    }
+  ]
+}`;
+}
+
+export function buildEnrichmentPrompt(rawFindings, patientInfo) {
+  return `You are an expert clinical interpretation AI system.
+
+Given the following raw extracted medical findings and patient info:
+PATIENT: ${JSON.stringify(patientInfo || {})}
+RAW FINDINGS: ${JSON.stringify(rawFindings || [])}
+
+Perform background clinical enrichment:
+1. Compare numerical values against reference ranges (LOW, HIGH, CRITICAL, NORMAL).
+2. Determine qualitative status (NORMAL, ABNORMAL, UNKNOWN).
+3. Generate concise 1-line patient-friendly clinical interpretations ("CLINICAL MEANING & SIGNIFICANCE").
+4. Identify abnormal findings and overall summary.
+5. Calculate Health Score (0-100) and overall risk level.
+
+Return ONLY valid JSON (no markdown fences) with this structure:
+{
+  "findings": [
+    {
+      "name": "<parameter name>",
+      "value": "<value>",
+      "unit": "<unit>",
+      "reference_range": "<range>",
+      "status": "NORMAL | LOW | HIGH | ABNORMAL | CRITICAL | UNKNOWN",
+      "interpretation": "<one-line clinical significance>",
+      "category": "<category e.g. Hematology, Biochemistry, Radiology>"
+    }
+  ],
+  "abnormal_findings": [
+    {
+      "name": "<parameter name>",
+      "value": "<value>",
+      "unit": "<unit>",
+      "reference_range": "<range>",
+      "status": "LOW | HIGH | ABNORMAL | CRITICAL",
+      "interpretation": "<why this value requires attention>"
+    }
+  ],
+  "overall_summary": "<2-3 sentence summary>",
+  "summary": "<2-3 sentence summary>",
+  "healthScore": <integer 0-100>,
+  "overallRiskLevel": "<LOW | MODERATE | HIGH | CRITICAL | UNKNOWN>",
+  "recommendations": ["<follow-up or lifestyle advice>"]
 }`;
 }

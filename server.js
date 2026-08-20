@@ -21,6 +21,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import db, { runQuery, getQuery, allQuery } from "./server/db.js";
 import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./server/authMiddleware.js";
+import { buildMedicalPrompt, buildFastExtractionPrompt, buildEnrichmentPrompt } from "./server/prompt.js";
 
 dotenv.config();
 
@@ -358,6 +359,64 @@ app.post(
     }
   }
 );
+
+// ── BACKGROUND CLINICAL ENRICHMENT ─────────────────────────────────
+app.post("/api/enrich", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { rawFindings, patientInfo } = req.body;
+    if (!rawFindings || !Array.isArray(rawFindings)) {
+      return res.status(400).json({ success: false, error: "rawFindings array required." });
+    }
+
+    const promptText = buildEnrichmentPrompt(rawFindings, patientInfo);
+    let responseText = "";
+
+    if (groq) {
+      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+      for (const modelName of groqModels) {
+        try {
+          const r = await groq.chat.completions.create({
+            model: modelName,
+            messages: [{ role: "user", content: promptText }],
+            response_format: { type: "json_object" },
+            max_tokens: 2500,
+            temperature: 0.1,
+          });
+          responseText = r.choices[0]?.message?.content || "";
+          if (responseText) break;
+        } catch (e) {
+          console.error(`Enrichment Groq error (${modelName}):`, e.message);
+        }
+      }
+    }
+
+    if (!responseText && googleAI) {
+      try {
+        const geminiRes = await googleAI.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [{ role: "user", parts: [{ text: promptText }] }],
+          config: { generationConfig: { responseMimeType: "application/json" } },
+        });
+        responseText = geminiRes.text || "";
+      } catch (e) {
+        console.error("Enrichment Gemini error:", e.message);
+      }
+    }
+
+    if (!responseText) {
+      return res.status(500).json({ success: false, error: "Enrichment service unavailable." });
+    }
+
+    const clean = responseText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+    const parsed = JSON.parse(clean);
+
+    return res.json({ success: true, enrichment: parsed });
+
+  } catch (err) {
+    console.error("❌ /api/enrich error:", err);
+    return res.status(500).json({ success: false, error: "Enrichment failed." });
+  }
+});
 
 // ── AI CHAT ───────────────────────────────────────────────────────
 app.post("/api/chat", aiLimiter, optionalAuthenticateToken, async (req, res) => {
