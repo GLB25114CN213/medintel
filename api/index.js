@@ -1,9 +1,15 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
 import { buildMedicalPrompt } from "../server/prompt.js";
+import { runQuery, getQuery, allQuery } from "../server/db.js";
+import { uploadToS3 } from "../server/s3.js";
+
+const JWT_SECRET = process.env.JWT_SECRET || "medintel-secret-key-2026";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -14,6 +20,29 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 },
 });
 
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return res.status(401).json({ success: false, error: "Authentication required." });
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ success: false, error: "Invalid or expired token." });
+    req.user = user;
+    next();
+  });
+};
+
+const optionalAuthenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return next();
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (!err) req.user = user;
+    next();
+  });
+};
+
 function getAiClients() {
   const geminiKey = process.env.GEMINI_API_KEY;
   const groqKey   = process.env.GROQ_API_KEY;
@@ -23,6 +52,58 @@ function getAiClients() {
 
   return { googleAI, groq };
 }
+
+// ── AUTHENTICATION ENDPOINTS (VERCEL SUPPORT) ─────────────────────
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { email, password, full_name } = req.body;
+    if (!email || !password || !full_name) {
+      return res.status(400).json({ success: false, error: "All fields are required." });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const existing = await getQuery("SELECT id FROM users WHERE email = ?", [cleanEmail]);
+    if (existing) return res.status(400).json({ success: false, error: "An account with this email already exists." });
+
+    const password_hash = await bcrypt.hash(password, 12);
+    const result = await runQuery("INSERT INTO users (email, password_hash, full_name) VALUES (?, ?, ?)", [cleanEmail, password_hash, full_name.trim()]);
+    const user = { id: result.id, email: cleanEmail, full_name: full_name.trim() };
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
+    return res.json({ success: true, token, user });
+  } catch (e) {
+    console.error("❌ Register:", e);
+    return res.status(500).json({ success: false, error: "Registration failed." });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ success: false, error: "Email and password are required." });
+
+    const userRow = await getQuery("SELECT * FROM users WHERE email = ?", [email.toLowerCase().trim()]);
+    if (!userRow) return res.status(401).json({ success: false, error: "Invalid email or password." });
+
+    const ok = await bcrypt.compare(password, userRow.password_hash);
+    if (!ok) return res.status(401).json({ success: false, error: "Invalid email or password." });
+
+    const user = { id: userRow.id, email: userRow.email, full_name: userRow.full_name };
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
+    return res.json({ success: true, token, user });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Login failed." });
+  }
+});
+
+app.get("/api/auth/me", authenticateToken, async (req, res) => {
+  try {
+    const userRow = await getQuery("SELECT id, email, full_name, created_at FROM users WHERE id = ?", [req.user.id]);
+    if (!userRow) return res.status(404).json({ success: false, error: "User not found." });
+    return res.json({ success: true, user: userRow });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to retrieve user." });
+  }
+});
 
 app.post("/analyze", (req, res) => {
   upload.single("file")(req, res, async (err) => {
@@ -131,7 +212,13 @@ app.post("/analyze", (req, res) => {
         return res.status(400).json({ success: false, error: "No medical report detected in the uploaded file." });
       }
 
-      return res.json({ success: true, analysis: parsed });
+      // ── AWS S3 Upload (If credentials configured) ──
+      const s3Result = await uploadToS3(rawBuffer, originalName, mimeType);
+      if (s3Result.success) {
+        parsed.s3_url = s3Result.url;
+      }
+
+      return res.json({ success: true, analysis: parsed, s3_url: s3Result.url || null });
 
     } catch (err) {
       console.error("❌ Vercel /analyze error:", err);

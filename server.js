@@ -19,6 +19,7 @@ import pdfParse from "pdf-parse";
 import Tesseract from "tesseract.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { uploadToS3 } from "./server/s3.js";
 import db, { runQuery, getQuery, allQuery } from "./server/db.js";
 import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./server/authMiddleware.js";
 
@@ -331,6 +332,12 @@ app.post(
         return res.status(400).json({ success: false, error: "No medical report detected in the uploaded file." });
       }
 
+      // ── AWS S3 Upload (If credentials configured) ──
+      const s3Result = await uploadToS3(rawBuffer, originalName, mimeType);
+      if (s3Result.success) {
+        parsed.s3_url = s3Result.url;
+      }
+
       const elapsedMs = Date.now() - t0;
 
       // Save to DB
@@ -346,7 +353,7 @@ app.post(
         }
       }
 
-      return res.json({ success: true, analysis: parsed, latencyMs: elapsedMs });
+      return res.json({ success: true, analysis: parsed, s3_url: s3Result.url || null, latencyMs: elapsedMs });
 
     } catch (err) {
       console.error("❌ /analyze unhandled error:", err);
