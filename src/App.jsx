@@ -388,48 +388,6 @@ export default function MedIntelAI() {
       setAnalysisResults(convertedAnalysis);
       setCurrentPage("analysis");
 
-      // ── STEP 3: BACKGROUND CLINICAL ENRICHMENT (Progressive Hydration) ──
-      const rawFindingsPayload = data.analysis.findings || data.analysis.section2_testSummaryTable || data.analysis.biomarkers || [];
-      const patientInfoPayload = data.analysis.patient || data.analysis.section1_patientInformation || {};
-
-      fetch(`${API_BASE}/api/enrich`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ rawFindings: rawFindingsPayload, patientInfo: patientInfoPayload }),
-      })
-      .then(r => r.json())
-      .then(enrichData => {
-        if (enrichData.success && enrichData.enrichment) {
-          const enriched = enrichData.enrichment;
-          setAnalysisResults(prev => {
-            if (!prev) return prev;
-            const enrichedFindings = enriched.findings || [];
-            return {
-              ...prev,
-              healthScore: Number(enriched.healthScore) || prev.healthScore,
-              riskLevel: enriched.overallRiskLevel || prev.riskLevel,
-              summaryPatientFriendly: enriched.overall_summary || enriched.summary || prev.summaryPatientFriendly,
-              summaryTechnical: enriched.overall_summary || prev.summaryTechnical,
-              alerts: Array.isArray(enriched.abnormal_findings) && enriched.abnormal_findings.length
-                ? enriched.abnormal_findings.map(a => ({ title: a.name, value: a.value }))
-                : prev.alerts,
-              biomarkers: prev.biomarkers.map(bm => {
-                const match = enrichedFindings.find(f => (f.name || f.testName)?.toLowerCase().trim() === bm.name?.toLowerCase().trim());
-                if (match) {
-                  return {
-                    ...bm,
-                    status: (match.status || bm.status).toLowerCase(),
-                    significance: match.interpretation || match.clinicalSignificance || bm.significance,
-                  };
-                }
-                return bm;
-              })
-            };
-          });
-        }
-      })
-      .catch(err => console.warn("Background enrichment notice:", err));
-
       if (token) {
         fetchSavedReports(token);
       }
