@@ -30,7 +30,7 @@ export async function uploadToS3(fileBuffer, originalFilename, mimeType) {
 
   if (!client || !bucketName) {
     console.log("ℹ️ AWS S3 credentials or AWS_S3_BUCKET_NAME not set. Skipping S3 upload.");
-    return { success: false, url: null, reason: "S3_NOT_CONFIGURED" };
+    return { success: false, url: null, status: "NOT_CONFIGURED", reason: "Missing AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, or AWS_S3_BUCKET_NAME in environment variables." };
   }
 
   try {
@@ -51,9 +51,9 @@ export async function uploadToS3(fileBuffer, originalFilename, mimeType) {
     const s3Url = `https://${bucketName.trim()}.s3.${region}.amazonaws.com/${key}`;
 
     console.log(`✅ Medical report uploaded to AWS S3: ${s3Url}`);
-    return { success: true, url: s3Url, key };
+    return { success: true, url: s3Url, key, status: "SUCCESS" };
   } catch (e) {
     console.error("❌ AWS S3 Upload Error:", e.message);
-    return { success: false, url: null, error: e.message };
+    return { success: false, url: null, status: "ERROR", error: e.message };
   }
 }

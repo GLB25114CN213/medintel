@@ -353,7 +353,14 @@ app.post(
         }
       }
 
-      return res.json({ success: true, analysis: parsed, s3_url: s3Result.url || null, latencyMs: elapsedMs });
+      return res.json({
+        success: true,
+        analysis: parsed,
+        s3_url: s3Result.url || null,
+        s3_status: s3Result.status,
+        s3_error: s3Result.error || s3Result.reason || null,
+        latencyMs: elapsedMs
+      });
 
     } catch (err) {
       console.error("❌ /analyze unhandled error:", err);

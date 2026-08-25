@@ -218,7 +218,13 @@ app.post("/analyze", (req, res) => {
         parsed.s3_url = s3Result.url;
       }
 
-      return res.json({ success: true, analysis: parsed, s3_url: s3Result.url || null });
+      return res.json({
+        success: true,
+        analysis: parsed,
+        s3_url: s3Result.url || null,
+        s3_status: s3Result.status,
+        s3_error: s3Result.error || s3Result.reason || null
+      });
 
     } catch (err) {
       console.error("❌ Vercel /analyze error:", err);

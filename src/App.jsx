@@ -1828,26 +1828,8 @@ export default function MedIntelAI() {
                   </div>
                 </div>
 
-                {/* Side Column: Referrals, Follow-ups, Access Log */}
+                {/* Side Column: Follow-ups, Access Log */}
                 <div className="space-y-6">
-                  {/* Referrals */}
-                  <div className={`p-5 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                    <h4 className="text-sm font-bold text-cyan-400 mb-3 flex items-center gap-2">
-                      <ExternalLink className="w-4 h-4" /> Specialist Referrals
-                    </h4>
-                    <div className="space-y-3">
-                      {(hdimsRecords?.referrals || []).map((ref, idx) => (
-                        <div key={idx} className="p-3 rounded-xl bg-slate-900/60 border border-white/5 text-xs">
-                          <div className="flex justify-between font-bold">
-                            <span>{ref.specialist_type}</span>
-                            <span className="text-cyan-400">{ref.status}</span>
-                          </div>
-                          <p className="text-slate-400 mt-1">{ref.reason}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
                   {/* Follow-ups */}
                   <div className={`p-5 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
                     <h4 className="text-sm font-bold text-amber-400 mb-3 flex items-center gap-2">
