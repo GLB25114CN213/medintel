@@ -7,7 +7,15 @@ import { buildMedicalPrompt } from "../server/prompt.js";
 import { uploadToS3 } from "../server/s3.js";
 import { analyzeMedicalReport, chatWithMedicalAssistant } from "../server/gemini.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "medintel-secret-key-2026";
+import { authenticateToken, optionalAuthenticateToken } from "../server/authMiddleware.js";
+import {
+  signUpUser,
+  confirmSignUpUser,
+  authenticateUser,
+  forgotPasswordUser,
+  confirmForgotPasswordUser,
+} from "../server/cognito.js";
+import { runQuery, getQuery, allQuery } from "../server/db.js";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -18,30 +26,7 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 },
 });
 
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ success: false, error: "Authentication required." });
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ success: false, error: "Invalid or expired token." });
-    req.user = user;
-    next();
-  });
-};
-
-const optionalAuthenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return next();
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (!err) req.user = user;
-    next();
-  });
-};
-
-// ── AUTHENTICATION ENDPOINTS (VERCEL SUPPORT) ─────────────────────
+// ── COGNITO AUTHENTICATION ENDPOINTS (VERCEL SUPPORT) ─────────────
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { email, password, full_name } = req.body;
@@ -49,18 +34,31 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(400).json({ success: false, error: "All fields are required." });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
-    const existing = await getQuery("SELECT id FROM users WHERE email = ?", [cleanEmail]);
-    if (existing) return res.status(400).json({ success: false, error: "An account with this email already exists." });
-
-    const password_hash = await bcrypt.hash(password, 12);
-    const result = await runQuery("INSERT INTO users (email, password_hash, full_name) VALUES (?, ?, ?)", [cleanEmail, password_hash, full_name.trim()]);
-    const user = { id: result.id, email: cleanEmail, full_name: full_name.trim() };
-    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
-    return res.json({ success: true, token, user });
+    const result = await signUpUser(email, password, full_name);
+    return res.json({
+      success: true,
+      requireVerification: true,
+      message: "Account created successfully! Please enter the 6-digit confirmation code sent to your email.",
+      userSub: result.userSub,
+    });
   } catch (e) {
-    console.error("❌ Register:", e);
-    return res.status(500).json({ success: false, error: "Registration failed." });
+    console.error("❌ Cognito Register:", e.message);
+    return res.status(400).json({ success: false, error: e.message || "Registration failed." });
+  }
+});
+
+app.post("/api/auth/confirm-signup", async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) {
+      return res.status(400).json({ success: false, error: "Email and confirmation code are required." });
+    }
+
+    await confirmSignUpUser(email, code);
+    return res.json({ success: true, message: "Email confirmed successfully. You may now sign in." });
+  } catch (e) {
+    console.error("❌ Cognito Confirm SignUp:", e.message);
+    return res.status(400).json({ success: false, error: e.message || "Email confirmation failed." });
   }
 });
 
@@ -69,28 +67,81 @@ app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, error: "Email and password are required." });
 
-    const userRow = await getQuery("SELECT * FROM users WHERE email = ?", [email.toLowerCase().trim()]);
-    if (!userRow) return res.status(401).json({ success: false, error: "Invalid email or password." });
+    const authResult = await authenticateUser(email, password);
 
-    const ok = await bcrypt.compare(password, userRow.password_hash);
-    if (!ok) return res.status(401).json({ success: false, error: "Invalid email or password." });
+    // Provision or link DB records by cognito_sub
+    let userRow = await getQuery("SELECT * FROM users WHERE cognito_sub = ?", [authResult.userSub]);
+    if (!userRow) {
+      userRow = await getQuery("SELECT * FROM users WHERE email = ?", [authResult.email]);
+      if (userRow) {
+        await runQuery("UPDATE users SET cognito_sub = ? WHERE id = ?", [authResult.userSub, userRow.id]);
+      } else {
+        const result = await runQuery(
+          "INSERT INTO users (cognito_sub, email, full_name) VALUES (?, ?, ?)",
+          [authResult.userSub, authResult.email, authResult.fullName]
+        );
+        userRow = { id: result.id, cognito_sub: authResult.userSub, email: authResult.email, full_name: authResult.fullName };
+      }
+    }
 
-    const user = { id: userRow.id, email: userRow.email, full_name: userRow.full_name };
-    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "7d" });
-    return res.json({ success: true, token, user });
+    let patientRow = await getQuery("SELECT * FROM patients WHERE cognito_sub = ?", [authResult.userSub]);
+    if (!patientRow) {
+      const pid = "MI-PAT-" + Math.floor(100000 + Math.random() * 900000);
+      await runQuery(
+        "INSERT INTO patients (user_id, cognito_sub, patient_id, full_name, email) VALUES (?, ?, ?, ?, ?)",
+        [userRow.id, authResult.userSub, pid, authResult.fullName, authResult.email]
+      );
+      patientRow = await getQuery("SELECT * FROM patients WHERE cognito_sub = ?", [authResult.userSub]);
+    }
+
+    return res.json({
+      success: true,
+      token: authResult.idToken,
+      refreshToken: authResult.refreshToken,
+      user: {
+        id: userRow.id,
+        sub: authResult.userSub,
+        email: authResult.email,
+        full_name: authResult.fullName,
+        patient_id: patientRow ? patientRow.patient_id : "MI-PAT-100245"
+      }
+    });
   } catch (e) {
-    return res.status(500).json({ success: false, error: "Login failed." });
+    console.error("❌ Cognito Login:", e.message);
+    return res.status(400).json({ success: false, error: e.message || "Login failed." });
+  }
+});
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ success: false, error: "Email is required." });
+
+    await forgotPasswordUser(email);
+    return res.json({ success: true, message: "Password reset code sent to your email." });
+  } catch (e) {
+    console.error("❌ Cognito Forgot Password:", e.message);
+    return res.status(400).json({ success: false, error: e.message || "Failed to send reset code." });
+  }
+});
+
+app.post("/api/auth/confirm-forgot-password", async (req, res) => {
+  try {
+    const { email, code, new_password } = req.body;
+    if (!email || !code || !new_password) {
+      return res.status(400).json({ success: false, error: "Email, confirmation code, and new password are required." });
+    }
+
+    await confirmForgotPasswordUser(email, code, new_password);
+    return res.json({ success: true, message: "Password reset successful! You may now sign in." });
+  } catch (e) {
+    console.error("❌ Cognito Confirm Forgot Password:", e.message);
+    return res.status(400).json({ success: false, error: e.message || "Password reset failed." });
   }
 });
 
 app.get("/api/auth/me", authenticateToken, async (req, res) => {
-  try {
-    const userRow = await getQuery("SELECT id, email, full_name, created_at FROM users WHERE id = ?", [req.user.id]);
-    if (!userRow) return res.status(404).json({ success: false, error: "User not found." });
-    return res.json({ success: true, user: userRow });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: "Failed to retrieve user." });
-  }
+  return res.json({ success: true, user: req.user });
 });
 
 app.post("/analyze", (req, res) => {

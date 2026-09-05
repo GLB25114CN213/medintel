@@ -37,9 +37,10 @@ export default function MedIntelAI() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('medintel_token') || null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
-  const [authForm, setAuthForm] = useState({ email: '', password: '', full_name: '' });
+  const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'verify', 'forgot_password', 'reset_password'
+  const [authForm, setAuthForm] = useState({ email: '', password: '', full_name: '', code: '', new_password: '' });
   const [authError, setAuthError] = useState('');
+  const [authSuccessMsg, setAuthSuccessMsg] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
@@ -363,37 +364,93 @@ export default function MedIntelAI() {
     }
   };
 
-  // Authentication Handlers
+  // Authentication Handlers for Amazon Cognito
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setAuthSuccessMsg('');
     setAuthLoading(true);
 
-    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-    const payload = authMode === 'login'
-      ? { email: authForm.email, password: authForm.password }
-      : { email: authForm.email, password: authForm.password, full_name: authForm.full_name };
-
     try {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
+      if (authMode === 'login') {
+        const res = await fetch(`${API_BASE}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authForm.email, password: authForm.password }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          localStorage.setItem('medintel_token', data.token);
+          setToken(data.token);
+          setUser(data.user);
+          setAuthModalOpen(false);
+          setAuthForm({ email: '', password: '', full_name: '', code: '', new_password: '' });
+          fetchSavedReports(data.token);
+          fetchHdimsPatientRecords();
+        } else {
+          setAuthError(data.error || 'Cognito authentication failed.');
+        }
 
-      if (data.success) {
-        localStorage.setItem('medintel_token', data.token);
-        setToken(data.token);
-        setUser(data.user);
-        setAuthModalOpen(false);
-        setAuthForm({ email: '', password: '', full_name: '' });
-        fetchSavedReports(data.token);
-      } else {
-        setAuthError(data.error || 'Authentication failed');
+      } else if (authMode === 'register') {
+        const res = await fetch(`${API_BASE}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authForm.email, password: authForm.password, full_name: authForm.full_name }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAuthSuccessMsg(data.message || 'Account created! Enter the confirmation code sent to your email.');
+          setAuthMode('verify');
+        } else {
+          setAuthError(data.error || 'Registration failed.');
+        }
+
+      } else if (authMode === 'verify') {
+        const res = await fetch(`${API_BASE}/api/auth/confirm-signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authForm.email, code: authForm.code }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAuthSuccessMsg('Email verified successfully! You may now sign in.');
+          setAuthMode('login');
+          setAuthForm(prev => ({ ...prev, password: '', code: '' }));
+        } else {
+          setAuthError(data.error || 'Email verification failed.');
+        }
+
+      } else if (authMode === 'forgot_password') {
+        const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authForm.email }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAuthSuccessMsg(data.message || 'Password reset code sent to your email.');
+          setAuthMode('reset_password');
+        } else {
+          setAuthError(data.error || 'Failed to send reset code.');
+        }
+
+      } else if (authMode === 'reset_password') {
+        const res = await fetch(`${API_BASE}/api/auth/confirm-forgot-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authForm.email, code: authForm.code, new_password: authForm.new_password }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAuthSuccessMsg('Password reset successful! You may now sign in with your new password.');
+          setAuthMode('login');
+          setAuthForm(prev => ({ ...prev, password: '', code: '', new_password: '' }));
+        } else {
+          setAuthError(data.error || 'Password reset failed.');
+        }
       }
     } catch (err) {
-      setAuthError('Failed to connect to authentication server.');
+      setAuthError('Failed to connect to Cognito authentication server.');
     } finally {
       setAuthLoading(false);
     }
@@ -2407,7 +2464,7 @@ export default function MedIntelAI() {
         </div>
       )}
 
-      {/* FIGMA GLASSMORPHISM AUTHENTICATION MODAL */}
+      {/* FIGMA GLASSMORPHISM COGNITO AUTHENTICATION MODAL */}
       {authModalOpen && (
         <div className="fixed inset-0 backdrop-blur-md bg-black/60 z-50 flex items-center justify-center p-4">
           <motion.div
@@ -2417,7 +2474,11 @@ export default function MedIntelAI() {
             className={`w-full max-w-md p-8 rounded-3xl border shadow-2xl relative ${darkMode ? 'glass-modal-dark text-white' : 'glass-modal-light text-slate-900'}`}
           >
             <button
-              onClick={() => setAuthModalOpen(false)}
+              onClick={() => {
+                setAuthModalOpen(false);
+                setAuthError('');
+                setAuthSuccessMsg('');
+              }}
               className="absolute top-6 right-6 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition"
             >
               <X className="w-5 h-5" />
@@ -2425,13 +2486,21 @@ export default function MedIntelAI() {
 
             <div className="text-center mb-6">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center mx-auto mb-3 text-white shadow-lg shadow-cyan-500/30">
-                <Lock className="w-6 h-6" />
+                <ShieldCheck className="w-6 h-6" />
               </div>
               <h3 className="text-2xl font-extrabold">
-                {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+                {authMode === 'login' && 'Welcome Back'}
+                {authMode === 'register' && 'Create Account'}
+                {authMode === 'verify' && 'Verify Email'}
+                {authMode === 'forgot_password' && 'Forgot Password'}
+                {authMode === 'reset_password' && 'Reset Password'}
               </h3>
               <p className="text-xs text-slate-400 mt-1">
-                {authMode === 'login' ? 'Sign in to access saved reports and AI chat history' : 'Register to manage your medical intelligence profile'}
+                {authMode === 'login' && 'Sign in to access your MedIntel profile & records via Amazon Cognito'}
+                {authMode === 'register' && 'Register for secure Amazon Cognito authentication'}
+                {authMode === 'verify' && 'Enter the 6-digit confirmation code sent to your email'}
+                {authMode === 'forgot_password' && 'Enter your registered email to receive a reset code'}
+                {authMode === 'reset_password' && 'Enter your confirmation code and choose a new password'}
               </p>
             </div>
 
@@ -2440,6 +2509,14 @@ export default function MedIntelAI() {
               <div className="p-3 mb-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-semibold flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{authError}</span>
+              </div>
+            )}
+
+            {/* Success Alert */}
+            {authSuccessMsg && (
+              <div className="p-3 mb-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                <span>{authSuccessMsg}</span>
               </div>
             )}
 
@@ -2454,13 +2531,14 @@ export default function MedIntelAI() {
                       required
                       value={authForm.full_name}
                       onChange={e => setAuthForm({ ...authForm, full_name: e.target.value })}
-                      placeholder="Dr. Sarah Mitchell"
+                      placeholder="Aarav Patel"
                       className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
                     />
                   </div>
                 </div>
               )}
 
+              {/* Email Address (used in all modes) */}
               <div>
                 <label className="text-xs font-semibold text-slate-400 mb-1 block">Email Address</label>
                 <div className="relative">
@@ -2470,50 +2548,126 @@ export default function MedIntelAI() {
                     required
                     value={authForm.email}
                     onChange={e => setAuthForm({ ...authForm, email: e.target.value })}
-                    placeholder="doctor@medintel.ai"
+                    placeholder="patient@medintel.ai"
                     className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-400 mb-1 block">Password</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    value={authForm.password}
-                    onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
-                    placeholder="••••••••"
-                    className={`w-full pl-11 pr-11 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-3.5 text-slate-400 hover:text-white"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+              {/* Confirmation Code Input (Verify & Reset Password modes) */}
+              {(authMode === 'verify' || authMode === 'reset_password') && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 mb-1 block">6-Digit Confirmation Code</label>
+                  <div className="relative">
+                    <ShieldCheck className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      maxLength={6}
+                      value={authForm.code}
+                      onChange={e => setAuthForm({ ...authForm, code: e.target.value })}
+                      placeholder="123456"
+                      className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm outline-none tracking-widest font-mono transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Password Input (Login & Register modes) */}
+              {(authMode === 'login' || authMode === 'register') && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-400 block">Password</label>
+                    {authMode === 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => { setAuthMode('forgot_password'); setAuthError(''); setAuthSuccessMsg(''); }}
+                        className="text-xs font-semibold text-cyan-400 hover:underline"
+                      >
+                        Forgot Password?
+                      </button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={authForm.password}
+                      onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
+                      placeholder="••••••••"
+                      className={`w-full pl-11 pr-11 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-3.5 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* New Password Input (Reset Password mode) */}
+              {authMode === 'reset_password' && (
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 mb-1 block">New Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={authForm.new_password}
+                      onChange={e => setAuthForm({ ...authForm, new_password: e.target.value })}
+                      placeholder="••••••••"
+                      className={`w-full pl-11 pr-11 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-3.5 text-slate-400 hover:text-white"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <button
                 type="submit"
                 disabled={authLoading}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white text-sm font-bold shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:scale-[1.01] active:scale-[0.99] transition flex items-center justify-center gap-2 mt-2"
               >
-                {authLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+                {authLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : (
+                  <>
+                    {authMode === 'login' && 'Sign In'}
+                    {authMode === 'register' && 'Create Account'}
+                    {authMode === 'verify' && 'Confirm Code'}
+                    {authMode === 'forgot_password' && 'Send Reset Code'}
+                    {authMode === 'reset_password' && 'Reset Password'}
+                  </>
+                )}
               </button>
             </form>
 
-            <div className="mt-6 text-center">
-              <button
-                onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
-                className="text-xs font-semibold text-cyan-400 hover:underline"
-              >
-                {authMode === 'login' ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
-              </button>
+            <div className="mt-6 text-center space-y-2">
+              {authMode === 'login' && (
+                <button
+                  onClick={() => { setAuthMode('register'); setAuthError(''); setAuthSuccessMsg(''); }}
+                  className="text-xs font-semibold text-cyan-400 hover:underline block mx-auto"
+                >
+                  Don't have an account? Sign Up
+                </button>
+              )}
+              {authMode !== 'login' && (
+                <button
+                  onClick={() => { setAuthMode('login'); setAuthError(''); setAuthSuccessMsg(''); }}
+                  className="text-xs font-semibold text-cyan-400 hover:underline block mx-auto"
+                >
+                  Back to Sign In
+                </button>
+              )}
             </div>
           </motion.div>
         </div>

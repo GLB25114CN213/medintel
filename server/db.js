@@ -20,8 +20,8 @@ try {
     db.run(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cognito_sub TEXT UNIQUE,
         email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
         full_name TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
@@ -55,6 +55,7 @@ try {
       CREATE TABLE IF NOT EXISTS patients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER UNIQUE,
+        cognito_sub TEXT UNIQUE,
         patient_id TEXT UNIQUE NOT NULL,
         full_name TEXT NOT NULL,
         email TEXT,
