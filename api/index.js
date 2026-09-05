@@ -174,15 +174,13 @@ app.post("/analyze", (req, res) => {
       }
 
       const promptText = buildMedicalPrompt(extractedText.substring(0, 10000));
-      const responseText = await analyzeMedicalReport(promptText);
-
-      if (!responseText) {
-        return res.status(503).json({
+      let responseText;
+      try {
+        responseText = await analyzeMedicalReport(promptText);
+      } catch (geminiErr) {
+        return res.status(500).json({
           success: false,
-          error: {
-            code: "AI_PROVIDER_ERROR",
-            message: "AI analysis is temporarily unavailable. Please try again.",
-          },
+          error: geminiErr.message || "Gemini AI analysis error.",
         });
       }
 

@@ -9,7 +9,7 @@ import { GoogleGenAI } from "@google/genai";
 function getGeminiConfig() {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
   const model = (process.env.GEMINI_MODEL || "gemini-3.6-flash").trim();
-  return { apiKey, model };
+  return { apiKey, model: model || "gemini-3.6-flash" };
 }
 
 /**
@@ -53,14 +53,15 @@ export async function analyzeMedicalReport(promptText, endpoint = "/analyze") {
   const { apiKey, model } = getGeminiConfig();
 
   if (!apiKey) {
+    const errMsg = "Missing GEMINI_API_KEY in environment variables. Please configure GEMINI_API_KEY in .env or Vercel settings.";
     logAiError({
       model,
       endpoint,
       status: 401,
-      message: "Missing GEMINI_API_KEY in environment variables.",
+      message: errMsg,
       durationMs: Date.now() - t0,
     });
-    return null;
+    throw new Error(errMsg);
   }
 
   try {
@@ -82,6 +83,8 @@ export async function analyzeMedicalReport(promptText, endpoint = "/analyze") {
     if (text) {
       console.log(`✅ [GEMINI] Response received successfully in ${Date.now() - t0}ms`);
       return text;
+    } else {
+      throw new Error("Gemini returned empty text output.");
     }
   } catch (err) {
     logAiError({
@@ -91,9 +94,8 @@ export async function analyzeMedicalReport(promptText, endpoint = "/analyze") {
       message: err.message,
       durationMs: Date.now() - t0,
     });
+    throw err;
   }
-
-  return null;
 }
 
 /**
