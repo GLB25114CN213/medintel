@@ -30,12 +30,23 @@ function logAiError({ provider, model, endpoint, status, message, durationMs }) 
 
 function cleanQwenOutput(rawText) {
   if (!rawText) return "";
-  return rawText
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim();
+  
+  // 1. Strip reasoning <think>...</think> tags if present
+  let cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+  // 2. Extract JSON payload between markdown code fences if present
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    cleaned = codeBlockMatch[1].trim();
+  }
+
+  // 3. Extract JSON object substring { ... } if text still contains trailing/leading commentary
+  const jsonObjectMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (jsonObjectMatch) {
+    cleaned = jsonObjectMatch[0].trim();
+  }
+
+  return cleaned;
 }
 
 /**
