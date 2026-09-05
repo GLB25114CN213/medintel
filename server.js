@@ -255,7 +255,13 @@ app.post(
       const responseText = await analyzeMedicalReport(promptText);
 
       if (!responseText) {
-        return res.status(503).json({ success: false, error: "AI analysis is temporarily unavailable. Please try again." });
+        return res.status(503).json({
+          success: false,
+          error: {
+            code: "AI_PROVIDER_ERROR",
+            message: "AI analysis is temporarily unavailable. Please try again.",
+          },
+        });
       }
 
       // ── Parse & Validate JSON ────────────────────────────────────

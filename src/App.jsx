@@ -473,7 +473,8 @@ export default function MedIntelAI() {
       }
 
       if (!data.success) {
-        alert(data.error || "Analysis failed");
+        const errorMsg = typeof data.error === "object" ? (data.error.message || "AI analysis is temporarily unavailable.") : (data.error || "Analysis failed");
+        alert(errorMsg);
         setLoading(false);
         return;
       }

@@ -1,46 +1,131 @@
 /**
- * MedIntel AI – Centralized Qwen 3.6 27B AI Module
- * Provider: Groq API (via official groq-sdk)
+ * MedIntel AI – Centralized Qwen 3.6 27B AI Module with Safe Diagnostics
+ * Primary Provider: Groq API (via groq-sdk)
  * Primary Model: qwen/qwen3.6-27b
  */
 
 import Groq from "groq-sdk";
 
-function getGroqClient() {
-  const apiKey = (process.env.GROQ_API_KEY || "").trim();
-  if (!apiKey) return null;
-  return new Groq({ apiKey });
+function getProviderConfig() {
+  const provider = (process.env.AI_PROVIDER || "groq").toLowerCase();
+  const model = process.env.AI_MODEL || "qwen/qwen3.6-27b";
+  const groqKey = (process.env.GROQ_API_KEY || "").trim();
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || process.env.QWEN_API_KEY || "").trim();
+
+  return { provider, model, groqKey, openRouterKey };
+}
+
+/**
+ * Safely logs diagnostic details on the backend without exposing API keys or patient data.
+ */
+function logAiError({ provider, model, endpoint, status, message, durationMs }) {
+  console.error(`\n[AI ERROR]`);
+  console.error(`Endpoint : ${endpoint || "N/A"}`);
+  console.error(`Provider : ${provider}`);
+  console.error(`Model    : ${model}`);
+  console.error(`Status   : ${status || "N/A"}`);
+  console.error(`Message  : ${message || "Unknown error"}`);
+  console.error(`Duration : ${durationMs}ms\n`);
 }
 
 /**
  * Analyzes medical report text using Qwen 3.6 27B on Groq
  */
-export async function analyzeMedicalReport(promptText) {
-  const groq = getGroqClient();
-  if (!groq) {
-    console.error("❌ Groq API Key missing in environment (GROQ_API_KEY).");
+export async function analyzeMedicalReport(promptText, endpoint = "/analyze") {
+  const t0 = Date.now();
+  const { provider, model, groqKey, openRouterKey } = getProviderConfig();
+
+  if (!groqKey && !openRouterKey) {
+    logAiError({
+      provider: provider.toUpperCase(),
+      model,
+      endpoint,
+      status: 401,
+      message: "Missing API key in environment variables (GROQ_API_KEY).",
+      durationMs: Date.now() - t0,
+    });
     return null;
   }
 
-  const modelName = process.env.AI_MODEL || "qwen/qwen3.6-27b";
+  // 1. Direct Groq API Execution
+  if (groqKey) {
+    try {
+      console.log(`⚡ [GROQ] Requesting ${model} for ${endpoint}...`);
+      const groq = new Groq({ apiKey: groqKey });
+      const response = await groq.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: promptText }],
+        response_format: { type: "json_object" },
+        max_tokens: 3500,
+        temperature: 0.1,
+      });
 
-  try {
-    console.log(`⚡ [GROQ QWEN 3.6 27B] Analyzing report with model: ${modelName}...`);
-    const response = await groq.chat.completions.create({
-      model: modelName,
-      messages: [{ role: "user", content: promptText }],
-      response_format: { type: "json_object" },
-      max_tokens: 3500,
-      temperature: 0.1,
-    });
-
-    const text = response.choices?.[0]?.message?.content || "";
-    if (text) {
-      console.log(`✅ [GROQ QWEN 3.6 27B] Analysis complete.`);
-      return text;
+      const text = response.choices?.[0]?.message?.content || "";
+      if (text) {
+        console.log(`✅ [GROQ] Response received successfully in ${Date.now() - t0}ms`);
+        return text;
+      }
+    } catch (err) {
+      logAiError({
+        provider: "Groq",
+        model,
+        endpoint,
+        status: err.status || err.statusCode || 500,
+        message: err.message,
+        durationMs: Date.now() - t0,
+      });
     }
-  } catch (err) {
-    console.error(`❌ [GROQ QWEN 3.6 27B Error]:`, err.message);
+  }
+
+  // 2. OpenRouter Secondary Route (If OPENROUTER_API_KEY explicitly configured)
+  if (openRouterKey) {
+    try {
+      console.log(`⚡ [OPENROUTER] Requesting ${model} for ${endpoint}...`);
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openRouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://medintel.vercel.app",
+          "X-Title": "MedIntel AI"
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: promptText }],
+          response_format: { type: "json_object" },
+          temperature: 0.1,
+          max_tokens: 3500,
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content || "";
+        if (text) {
+          console.log(`✅ [OPENROUTER] Response received successfully in ${Date.now() - t0}ms`);
+          return text;
+        }
+      } else {
+        const errText = await res.text();
+        logAiError({
+          provider: "OpenRouter",
+          model,
+          endpoint,
+          status: res.status,
+          message: errText,
+          durationMs: Date.now() - t0,
+        });
+      }
+    } catch (err) {
+      logAiError({
+        provider: "OpenRouter",
+        model,
+        endpoint,
+        status: 500,
+        message: err.message,
+        durationMs: Date.now() - t0,
+      });
+    }
   }
 
   return null;
@@ -49,47 +134,106 @@ export async function analyzeMedicalReport(promptText) {
 /**
  * Interactive medical chat assistant powered by Qwen 3.6 27B on Groq
  */
-export async function chatWithMedicalAssistant(systemPrompt, safeMessages = []) {
-  const groq = getGroqClient();
-  if (!groq) {
-    console.error("❌ Groq API Key missing in environment (GROQ_API_KEY).");
+export async function chatWithMedicalAssistant(systemPrompt, safeMessages = [], endpoint = "/api/chat") {
+  const t0 = Date.now();
+  const { provider, model, groqKey, openRouterKey } = getProviderConfig();
+
+  if (!groqKey && !openRouterKey) {
+    logAiError({
+      provider: provider.toUpperCase(),
+      model,
+      endpoint,
+      status: 401,
+      message: "Missing API key in environment variables (GROQ_API_KEY).",
+      durationMs: Date.now() - t0,
+    });
     return null;
   }
 
-  const modelName = process.env.AI_MODEL || "qwen/qwen3.6-27b";
+  // 1. Direct Groq API Execution
+  if (groqKey) {
+    try {
+      console.log(`⚡ [GROQ] Chat request to ${model} for ${endpoint}...`);
+      const groq = new Groq({ apiKey: groqKey });
+      const response = await groq.chat.completions.create({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...safeMessages,
+        ],
+        max_tokens: 1500,
+        temperature: 0.2,
+      });
 
-  try {
-    console.log(`⚡ [GROQ QWEN 3.6 27B] Generating chat response with model: ${modelName}...`);
-    const response = await groq.chat.completions.create({
-      model: modelName,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...safeMessages,
-      ],
-      max_tokens: 1500,
-      temperature: 0.2,
-    });
-
-    const text = response.choices?.[0]?.message?.content || "";
-    if (text) {
-      console.log(`✅ [GROQ QWEN 3.6 27B] Chat response generated.`);
-      return text;
+      const text = response.choices?.[0]?.message?.content || "";
+      if (text) {
+        console.log(`✅ [GROQ] Chat response received in ${Date.now() - t0}ms`);
+        return text;
+      }
+    } catch (err) {
+      logAiError({
+        provider: "Groq",
+        model,
+        endpoint,
+        status: err.status || err.statusCode || 500,
+        message: err.message,
+        durationMs: Date.now() - t0,
+      });
     }
-  } catch (err) {
-    console.error(`❌ [GROQ QWEN 3.6 27B Chat Error]:`, err.message);
+  }
+
+  // 2. OpenRouter Route
+  if (openRouterKey) {
+    try {
+      console.log(`⚡ [OPENROUTER] Chat request to ${model} for ${endpoint}...`);
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openRouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://medintel.vercel.app",
+          "X-Title": "MedIntel AI"
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...safeMessages,
+          ],
+          temperature: 0.2,
+          max_tokens: 1500,
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content || "";
+        if (text) {
+          console.log(`✅ [OPENROUTER] Chat response received in ${Date.now() - t0}ms`);
+          return text;
+        }
+      } else {
+        const errText = await res.text();
+        logAiError({
+          provider: "OpenRouter",
+          model,
+          endpoint,
+          status: res.status,
+          message: errText,
+          durationMs: Date.now() - t0,
+        });
+      }
+    } catch (err) {
+      logAiError({
+        provider: "OpenRouter",
+        model,
+        endpoint,
+        status: 500,
+        message: err.message,
+        durationMs: Date.now() - t0,
+      });
+    }
   }
 
   return null;
-}
-
-/**
- * Shared compatibility wrapper
- */
-export async function callQwen36({ promptText, isJson = false, messages = [] }) {
-  if (messages && messages.length > 0) {
-    const sysMsg = messages.find(m => m.role === "system")?.content || "";
-    const userMsgs = messages.filter(m => m.role !== "system");
-    return chatWithMedicalAssistant(sysMsg, userMsgs);
-  }
-  return analyzeMedicalReport(promptText);
 }

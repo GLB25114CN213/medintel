@@ -129,7 +129,10 @@ app.post("/analyze", (req, res) => {
       if (!responseText) {
         return res.status(503).json({
           success: false,
-          error: "AI analysis is temporarily unavailable. Please try again.",
+          error: {
+            code: "AI_PROVIDER_ERROR",
+            message: "AI analysis is temporarily unavailable. Please try again.",
+          },
         });
       }
 
