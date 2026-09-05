@@ -174,9 +174,36 @@ try {
         title TEXT NOT NULL,
         description TEXT NOT NULL,
         status TEXT,
+        hospital_name TEXT,
+        doctor_name TEXT,
+        reason TEXT,
+        diagnosis TEXT,
+        symptoms TEXT,
+        medications TEXT,
+        tests TEXT,
+        notes TEXT,
+        file_name TEXT,
+        s3_url TEXT,
+        follow_up_date TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Migrations for health_timeline extra fields
+    const addColumn = (col, type) => {
+      db.run(`ALTER TABLE health_timeline ADD COLUMN ${col} ${type}`, () => {});
+    };
+    addColumn("hospital_name", "TEXT");
+    addColumn("doctor_name", "TEXT");
+    addColumn("reason", "TEXT");
+    addColumn("diagnosis", "TEXT");
+    addColumn("symptoms", "TEXT");
+    addColumn("medications", "TEXT");
+    addColumn("tests", "TEXT");
+    addColumn("notes", "TEXT");
+    addColumn("file_name", "TEXT");
+    addColumn("s3_url", "TEXT");
+    addColumn("follow_up_date", "TEXT");
 
     seedHDIMSData(db);
   });

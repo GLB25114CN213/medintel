@@ -594,6 +594,172 @@ app.get("/api/hdims/patient/records", optionalAuthenticateToken, async (req, res
   }
 });
 
+// Add new health record
+app.post("/api/hdims/patient/records", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const {
+      patient_id = "MI-PAT-100245",
+      event_date,
+      event_type = "Consultation",
+      title,
+      description,
+      hospital_name = "",
+      doctor_name = "",
+      reason = "",
+      diagnosis = "",
+      symptoms = "",
+      medications = "",
+      tests = "",
+      notes = "",
+      file_name = "",
+      s3_url = "",
+      follow_up_date = "",
+      status = "COMPLETED",
+    } = req.body;
+
+    if (!event_date || (!title && !event_type)) {
+      return res.status(400).json({ success: false, error: "Date and Record Type/Title are required." });
+    }
+
+    const recordTitle = title || `${event_type} at ${hospital_name || 'Clinic'}`;
+    const recordDesc = description || diagnosis || reason || notes || `Health record entry for ${event_type}`;
+
+    const result = await runQuery(
+      `INSERT INTO health_timeline 
+        (patient_id, event_date, event_type, title, description, status, hospital_name, doctor_name, reason, diagnosis, symptoms, medications, tests, notes, file_name, s3_url, follow_up_date) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        patient_id,
+        event_date,
+        event_type,
+        recordTitle,
+        recordDesc,
+        status,
+        hospital_name,
+        doctor_name,
+        reason,
+        diagnosis,
+        symptoms,
+        medications,
+        tests,
+        notes,
+        file_name,
+        s3_url,
+        follow_up_date,
+      ]
+    );
+
+    // Sync follow-up date to follow_ups table if present
+    if (follow_up_date) {
+      await runQuery(
+        `INSERT INTO follow_ups (patient_id, doctor_name, condition, recommended_date, status, notes)
+         VALUES (?, ?, ?, ?, 'DUE', ?)`,
+        [patient_id, doctor_name || "Healthcare Provider", diagnosis || reason || recordTitle, follow_up_date, notes || "Follow-up scheduled"]
+      );
+    }
+
+    // Sync medications to patient profile if present
+    if (medications && medications.trim()) {
+      const p = await getQuery("SELECT medications FROM patients WHERE patient_id = ?", [patient_id]);
+      if (p) {
+        let currentMeds = (p.medications || "").trim();
+        if (!currentMeds.toLowerCase().includes(medications.toLowerCase())) {
+          const updatedMeds = currentMeds ? `${currentMeds}, ${medications}` : medications;
+          await runQuery("UPDATE patients SET medications = ? WHERE patient_id = ?", [updatedMeds, patient_id]);
+        }
+      }
+    }
+
+    // Access log audit entry
+    await runQuery(
+      `INSERT INTO access_logs (patient_id, doctor_name, hospital_name, purpose, status)
+       VALUES (?, ?, ?, ?, 'RECORD ADDED')`,
+      [patient_id, doctor_name || "Patient Self-Service", hospital_name || "MedIntel Portal", `Added ${event_type} Record`]
+    );
+
+    const newRecord = await getQuery("SELECT * FROM health_timeline WHERE id = ?", [result.id]);
+    return res.json({ success: true, record: newRecord });
+  } catch (e) {
+    console.error("Error creating health record:", e);
+    return res.status(500).json({ success: false, error: "Failed to create health record." });
+  }
+});
+
+// Update existing health record
+app.put("/api/hdims/patient/records/:id", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      event_date,
+      event_type,
+      title,
+      description,
+      hospital_name,
+      doctor_name,
+      reason,
+      diagnosis,
+      symptoms,
+      medications,
+      tests,
+      notes,
+      file_name,
+      s3_url,
+      follow_up_date,
+      status,
+    } = req.body;
+
+    const existing = await getQuery("SELECT * FROM health_timeline WHERE id = ?", [id]);
+    if (!existing) {
+      return res.status(404).json({ success: false, error: "Record not found." });
+    }
+
+    await runQuery(
+      `UPDATE health_timeline SET 
+        event_date = ?, event_type = ?, title = ?, description = ?, status = ?,
+        hospital_name = ?, doctor_name = ?, reason = ?, diagnosis = ?, symptoms = ?,
+        medications = ?, tests = ?, notes = ?, file_name = ?, s3_url = ?, follow_up_date = ?
+       WHERE id = ?`,
+      [
+        event_date || existing.event_date,
+        event_type || existing.event_type,
+        title || existing.title,
+        description || existing.description,
+        status || existing.status,
+        hospital_name ?? existing.hospital_name,
+        doctor_name ?? existing.doctor_name,
+        reason ?? existing.reason,
+        diagnosis ?? existing.diagnosis,
+        symptoms ?? existing.symptoms,
+        medications ?? existing.medications,
+        tests ?? existing.tests,
+        notes ?? existing.notes,
+        file_name ?? existing.file_name,
+        s3_url ?? existing.s3_url,
+        follow_up_date ?? existing.follow_up_date,
+        id,
+      ]
+    );
+
+    const updated = await getQuery("SELECT * FROM health_timeline WHERE id = ?", [id]);
+    return res.json({ success: true, record: updated });
+  } catch (e) {
+    console.error("Error updating health record:", e);
+    return res.status(500).json({ success: false, error: "Failed to update health record." });
+  }
+});
+
+// Delete health record
+app.delete("/api/hdims/patient/records/:id", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await runQuery("DELETE FROM health_timeline WHERE id = ?", [id]);
+    return res.json({ success: true, message: "Record deleted successfully." });
+  } catch (e) {
+    console.error("Error deleting health record:", e);
+    return res.status(500).json({ success: false, error: "Failed to delete health record." });
+  }
+});
+
 // 4. Generate Temporary QR Token
 app.post("/api/hdims/qr/generate", optionalAuthenticateToken, async (req, res) => {
   try {

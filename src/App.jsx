@@ -5,7 +5,7 @@ import {
   Menu, X, Plus, Trash2, Download, Eye, EyeOff, ArrowRight, BarChart3, Activity,
   FileText, CheckCircle, Clock, Home, Settings, LogOut, Bell, Search, Calendar,
   User, Lock, Mail, MessageSquare, Copy, Check, Sparkles, RefreshCw, Sun, Moon, Printer,
-  QrCode, ShieldCheck, UserCheck, FileCheck, AlertTriangle, Stethoscope, Building2, ExternalLink, Share2, History, CheckSquare, XSquare, MapPin
+  QrCode, ShieldCheck, UserCheck, FileCheck, AlertTriangle, Stethoscope, Building2, ExternalLink, Share2, History, CheckSquare, XSquare, MapPin, Pencil
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, RadarChart, PolarGrid,
@@ -93,6 +93,227 @@ export default function MedIntelAI() {
     known_conditions: "",
     medications: "",
   });
+
+  // Health Record Timeline Modal States
+  const [healthRecordModalOpen, setHealthRecordModalOpen] = useState(false);
+  const [viewRecordDetailModalOpen, setViewRecordDetailModalOpen] = useState(false);
+  const [selectedRecordDetail, setSelectedRecordDetail] = useState(null);
+  const [isAiExtracting, setIsAiExtracting] = useState(false);
+  const [healthRecordForm, setHealthRecordForm] = useState({
+    id: null,
+    event_date: new Date().toISOString().split('T')[0],
+    event_type: "Consultation",
+    title: "",
+    hospital_name: "",
+    doctor_name: "",
+    reason: "",
+    diagnosis: "",
+    symptoms: "",
+    medications: "",
+    tests: "",
+    notes: "",
+    file_name: "",
+    s3_url: "",
+    follow_up_date: "",
+    file: null,
+  });
+
+  const RECORD_TYPES = [
+    "Consultation",
+    "Lab Test",
+    "Diagnostic Report",
+    "Medication",
+    "Vaccination",
+    "Hospitalization",
+    "Emergency Visit",
+    "Other",
+  ];
+
+  const handleOpenAddRecordModal = () => {
+    setHealthRecordForm({
+      id: null,
+      event_date: new Date().toISOString().split('T')[0],
+      event_type: "Consultation",
+      title: "",
+      hospital_name: "",
+      doctor_name: "",
+      reason: "",
+      diagnosis: "",
+      symptoms: "",
+      medications: "",
+      tests: "",
+      notes: "",
+      file_name: "",
+      s3_url: "",
+      follow_up_date: "",
+      file: null,
+    });
+    setHealthRecordModalOpen(true);
+  };
+
+  const handleOpenEditRecordModal = (item) => {
+    setHealthRecordForm({
+      id: item.id,
+      event_date: item.event_date || new Date().toISOString().split('T')[0],
+      event_type: item.event_type || "Consultation",
+      title: item.title || "",
+      hospital_name: item.hospital_name || "",
+      doctor_name: item.doctor_name || "",
+      reason: item.reason || "",
+      diagnosis: item.diagnosis || "",
+      symptoms: item.symptoms || "",
+      medications: item.medications || "",
+      tests: item.tests || "",
+      notes: item.notes || item.description || "",
+      file_name: item.file_name || "",
+      s3_url: item.s3_url || "",
+      follow_up_date: item.follow_up_date || "",
+      file: null,
+    });
+    setHealthRecordModalOpen(true);
+  };
+
+  const handleOpenViewRecordDetail = (item) => {
+    setSelectedRecordDetail(item);
+    setViewRecordDetailModalOpen(true);
+  };
+
+  const handleHealthRecordFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setHealthRecordForm(prev => ({
+        ...prev,
+        file_name: file.name,
+        file: file,
+      }));
+    }
+  };
+
+  const handleAiExtractForForm = async () => {
+    if (!healthRecordForm.file) {
+      alert("Please select a medical report file (PDF or Image) first.");
+      return;
+    }
+    setIsAiExtracting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", healthRecordForm.file);
+      
+      const response = await fetch(`${API_BASE}/analyze`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (data.success && data.analysis) {
+        const a = data.analysis;
+        const pInfo = a.section1_patientInformation || a.patient || {};
+        const kFindings = a.section3_keyFindings || {};
+        const recs = a.section6_recommendedFollowUp || a.recommendations || {};
+
+        const extractedDiagnosis = a.overall_summary || a.summary || (kFindings.abnormalFindings || []).map(f => `${f.name}: ${f.value}`).join(", ");
+        const extractedTests = (a.findings || a.section2_testSummaryTable || []).map(f => `${f.testName || f.name}: ${f.result || f.value} ${f.unit || ''} (${f.status || 'NORMAL'})`).join("; ");
+        const extractedMeds = (recs.lifestyleMeasures || recs.lifestyle || []).join(", ");
+        const extractedDoctor = pInfo.doctorName && pInfo.doctorName !== "Not Available" ? pInfo.doctorName : "";
+        const extractedHospital = pInfo.facilityName && pInfo.facilityName !== "Not Available" ? pInfo.facilityName : "";
+        const extractedType = a.reportType || a.report_type || "Diagnostic Report";
+
+        setHealthRecordForm(prev => ({
+          ...prev,
+          event_type: RECORD_TYPES.includes(extractedType) ? extractedType : "Diagnostic Report",
+          title: prev.title || `${extractedType || 'Diagnostic Report'} - AI Extracted`,
+          diagnosis: extractedDiagnosis || prev.diagnosis,
+          tests: extractedTests || prev.tests,
+          medications: extractedMeds || prev.medications,
+          doctor_name: extractedDoctor || prev.doctor_name,
+          hospital_name: extractedHospital || prev.hospital_name,
+        }));
+        alert("✨ MedIntel AI successfully extracted report details! Please review and confirm the pre-filled fields before saving.");
+      } else {
+        alert("AI extraction returned no structured data. You can fill the fields manually.");
+      }
+    } catch (err) {
+      console.error("AI extraction error:", err);
+      alert("AI extraction failed. Please fill the fields manually.");
+    } finally {
+      setIsAiExtracting(false);
+    }
+  };
+
+  const handleSaveHealthRecord = async (e) => {
+    e.preventDefault();
+    if (!healthRecordForm.event_date) {
+      alert("Please specify the record date.");
+      return;
+    }
+
+    try {
+      const payload = {
+        patient_id: hdimsPatient.patient_id || "MI-PAT-100245",
+        event_date: healthRecordForm.event_date,
+        event_type: healthRecordForm.event_type,
+        title: healthRecordForm.title || `${healthRecordForm.event_type} at ${healthRecordForm.hospital_name || 'Clinic'}`,
+        description: healthRecordForm.diagnosis || healthRecordForm.reason || healthRecordForm.notes || `${healthRecordForm.event_type} Record`,
+        hospital_name: healthRecordForm.hospital_name,
+        doctor_name: healthRecordForm.doctor_name,
+        reason: healthRecordForm.reason,
+        diagnosis: healthRecordForm.diagnosis,
+        symptoms: healthRecordForm.symptoms,
+        medications: healthRecordForm.medications,
+        tests: healthRecordForm.tests,
+        notes: healthRecordForm.notes,
+        file_name: healthRecordForm.file_name,
+        s3_url: healthRecordForm.s3_url || (healthRecordForm.file_name ? `local-attachment-${Date.now()}` : ""),
+        follow_up_date: healthRecordForm.follow_up_date,
+        status: "COMPLETED",
+      };
+
+      let res;
+      if (healthRecordForm.id) {
+        res = await fetch(`${API_BASE}/api/hdims/patient/records/${healthRecordForm.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch(`${API_BASE}/api/hdims/patient/records`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      const data = await res.json();
+      if (data.success) {
+        fetchHdimsPatientRecords();
+        setHealthRecordModalOpen(false);
+      } else {
+        alert(data.error || "Failed to save health record.");
+      }
+    } catch (err) {
+      console.error("Save health record error:", err);
+      alert("Failed to save health record. Please check your connection.");
+    }
+  };
+
+  const handleDeleteHealthRecord = async (id) => {
+    if (!confirm("Are you sure you want to delete this health record from your timeline?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/hdims/patient/records/${id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchHdimsPatientRecords();
+        if (viewRecordDetailModalOpen) setViewRecordDetailModalOpen(false);
+      } else {
+        alert(data.error || "Failed to delete record.");
+      }
+    } catch (err) {
+      console.error("Delete record error:", err);
+      alert("Failed to delete health record.");
+    }
+  };
 
   const openEditProfileModal = () => {
     setProfileForm({
@@ -1871,32 +2092,135 @@ export default function MedIntelAI() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Timeline Column */}
                 <div className="lg:col-span-2 space-y-6">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xl font-bold flex items-center gap-2">
-                      <History className="w-5 h-5 text-cyan-400" /> Longitudinal Health Timeline
-                    </h3>
-                    <span className="text-xs text-slate-400">Database-driven records</span>
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                      <h3 className="text-xl font-bold flex items-center gap-2">
+                        <History className="w-5 h-5 text-cyan-400" /> Longitudinal Health Timeline
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">Database-driven patient medical history</p>
+                    </div>
+                    <button
+                      onClick={handleOpenAddRecordModal}
+                      className="px-4 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-2 shadow-lg shadow-cyan-500/20 transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                    >
+                      <Plus className="w-4 h-4" /> Add Health Record
+                    </button>
                   </div>
 
-                  <div className="space-y-4 relative before:absolute before:left-6 before:top-3 before:bottom-3 before:w-0.5 before:bg-cyan-500/20">
-                    {(hdimsRecords?.timeline || []).map((item, i) => (
-                      <div key={i} className={`relative pl-12 p-4 rounded-2xl border ${darkMode ? 'glass-card-dark' : 'glass-card-light'}`}>
-                        <div className="absolute left-4 top-5 w-4 h-4 rounded-full bg-cyan-500 border-4 border-slate-950 shadow-md" />
-                        <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-                          <span className="text-xs font-mono font-bold text-cyan-400">{item.event_date}</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            item.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-300' :
-                            item.status === 'ABNORMAL' ? 'bg-rose-500/20 text-rose-300' :
-                            item.status === 'DUE' ? 'bg-amber-500/20 text-amber-300' : 'bg-cyan-500/20 text-cyan-300'
-                          }`}>
-                            {item.event_type} • {item.status}
-                          </span>
-                        </div>
-                        <h4 className="font-bold text-sm">{item.title}</h4>
-                        <p className={`text-xs mt-1 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{item.description}</p>
+                  {(!hdimsRecords?.timeline || hdimsRecords.timeline.length === 0) ? (
+                    <div className={`p-8 rounded-2xl border border-dashed text-center ${darkMode ? 'border-slate-800 bg-slate-900/40' : 'border-slate-300 bg-slate-50'}`}>
+                      <div className="w-12 h-12 rounded-full bg-cyan-500/10 text-cyan-400 flex items-center justify-center mx-auto mb-3">
+                        <History className="w-6 h-6" />
                       </div>
-                    ))}
-                  </div>
+                      <h4 className="font-bold text-base text-slate-200">No health records added yet</h4>
+                      <p className="text-xs text-slate-400 max-w-md mx-auto mt-1 mb-4">
+                        Add a consultation, report, medication, vaccination, or other health event to build your medical timeline.
+                      </p>
+                      <button
+                        onClick={handleOpenAddRecordModal}
+                        className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs rounded-xl inline-flex items-center gap-2 cursor-pointer shadow-md"
+                      >
+                        <Plus className="w-4 h-4" /> Add First Health Record
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4 relative before:absolute before:left-6 before:top-3 before:bottom-3 before:w-0.5 before:bg-cyan-500/20">
+                      {[...(hdimsRecords?.timeline || [])]
+                        .sort((a, b) => new Date(b.event_date || 0) - new Date(a.event_date || 0))
+                        .map((item, i) => (
+                          <div key={item.id || i} className={`relative pl-12 p-5 rounded-2xl border transition-all ${darkMode ? 'glass-card-dark hover:border-cyan-500/30' : 'glass-card-light hover:border-cyan-500/30'}`}>
+                            <div className="absolute left-4 top-5 w-4 h-4 rounded-full bg-cyan-500 border-4 border-slate-950 shadow-md shadow-cyan-500/40" />
+                            
+                            <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-mono font-bold text-cyan-400 flex items-center gap-1">
+                                  <Calendar className="w-3.5 h-3.5" /> {item.event_date}
+                                </span>
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                  item.event_type === 'Consultation' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                                  item.event_type === 'Lab Test' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                                  item.event_type === 'Diagnostic Report' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
+                                  item.event_type === 'Emergency Visit' || item.event_type === 'Hospitalization' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
+                                  item.event_type === 'Vaccination' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                                  'bg-slate-700/50 text-slate-300 border border-slate-600/30'
+                                }`}>
+                                  {item.event_type || 'Event'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleOpenViewRecordDetail(item)}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer"
+                                  title="View Details"
+                                >
+                                  <Eye className="w-3 h-3 text-cyan-400" /> Details
+                                </button>
+                                <button
+                                  onClick={() => handleOpenEditRecordModal(item)}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer"
+                                  title="Edit Record"
+                                >
+                                  <Pencil className="w-3 h-3 text-amber-400" /> Edit
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteHealthRecord(item.id)}
+                                  className="p-1 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 transition cursor-pointer"
+                                  title="Delete Record"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <h4 className="font-bold text-base text-slate-100">{item.title}</h4>
+                            
+                            {(item.doctor_name || item.hospital_name) && (
+                              <p className="text-xs text-slate-400 flex items-center gap-2 mt-1 font-medium">
+                                {item.doctor_name && <span className="flex items-center gap-1"><Stethoscope className="w-3 h-3 text-cyan-400" /> {item.doctor_name}</span>}
+                                {item.hospital_name && <span className="flex items-center gap-1"><Building2 className="w-3 h-3 text-indigo-400" /> {item.hospital_name}</span>}
+                              </p>
+                            )}
+
+                            {item.reason && (
+                              <p className="text-xs text-slate-300 mt-2 bg-slate-900/50 p-2.5 rounded-xl border border-white/5">
+                                <strong className="text-slate-400">Reason:</strong> {item.reason}
+                              </p>
+                            )}
+
+                            {item.diagnosis && (
+                              <p className="text-xs text-cyan-200/90 mt-1.5 bg-cyan-950/30 p-2.5 rounded-xl border border-cyan-500/10">
+                                <strong className="text-cyan-400">Diagnosis / Findings:</strong> {item.diagnosis}
+                              </p>
+                            )}
+
+                            {item.tests && (
+                              <div className="mt-2 text-xs text-purple-300 bg-purple-950/20 p-2.5 rounded-xl border border-purple-500/10">
+                                <strong className="text-purple-400">Test Results:</strong> {item.tests}
+                              </div>
+                            )}
+
+                            {item.medications && (
+                              <div className="mt-2 text-xs text-emerald-300 bg-emerald-950/20 p-2.5 rounded-xl border border-emerald-500/10">
+                                <strong className="text-emerald-400">Medications:</strong> {item.medications}
+                              </div>
+                            )}
+
+                            {item.file_name && (
+                              <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700/60 text-xs text-cyan-300">
+                                <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                                <span className="truncate max-w-[200px]">{item.file_name}</span>
+                                {item.s3_url && (
+                                  <a href={item.s3_url} target="_blank" rel="noopener noreferrer" className="hover:text-white underline text-[10px] ml-1">
+                                    View File
+                                  </a>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Side Column: Follow-ups, Access Log */}
@@ -2690,6 +3014,344 @@ export default function MedIntelAI() {
                   Back to Sign In
                 </button>
               )}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ADD / EDIT HEALTH RECORD MODAL */}
+      {healthRecordModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`w-full max-w-2xl p-6 rounded-2xl border shadow-2xl my-8 ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}
+          >
+            <div className="flex items-center justify-between border-b pb-4 mb-5 border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold">
+                    {healthRecordForm.id ? "Edit Health Record" : "Add Health Record"}
+                  </h3>
+                  <p className="text-xs text-slate-400">Add consultations, lab tests, medications, or reports to your timeline</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setHealthRecordModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveHealthRecord} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Record Type *</label>
+                  <select
+                    value={healthRecordForm.event_type}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, event_type: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none font-semibold ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  >
+                    {RECORD_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={healthRecordForm.event_date}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, event_date: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none font-semibold ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Hospital / Clinic</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. City General Hospital"
+                    value={healthRecordForm.hospital_name}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, hospital_name: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Doctor / Healthcare Provider</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Dr. Rajesh Verma"
+                    value={healthRecordForm.doctor_name}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, doctor_name: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-300 block mb-1">Title / Summary Heading</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Annual Cardiology Checkup & Lipid Screening"
+                  value={healthRecordForm.title}
+                  onChange={e => setHealthRecordForm({ ...healthRecordForm, title: e.target.value })}
+                  className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Reason for Visit / Symptoms</label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Mild fatigue, routine lipid evaluation"
+                    value={healthRecordForm.reason}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, reason: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Diagnosis / Clinical Findings</label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Stage 1 Hypertension, Borderline Hyperlipidemia"
+                    value={healthRecordForm.diagnosis}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, diagnosis: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Tests / Investigations</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Total Cholesterol: 228 mg/dL, HbA1c: 6.2%"
+                    value={healthRecordForm.tests}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, tests: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Medications Prescribed</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Amlodipine 5mg (Daily), Atorvastatin 10mg"
+                    value={healthRecordForm.medications}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, medications: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Follow-up Date (Optional)</label>
+                  <input
+                    type="date"
+                    value={healthRecordForm.follow_up_date}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, follow_up_date: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-300 block mb-1">Notes / Instructions</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Low sodium diet, 30 mins daily walk"
+                    value={healthRecordForm.notes}
+                    onChange={e => setHealthRecordForm({ ...healthRecordForm, notes: e.target.value })}
+                    className={`w-full p-2.5 rounded-xl border outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+                  />
+                </div>
+              </div>
+
+              {/* Document Upload & AI Extract Section */}
+              <div className="p-3.5 rounded-xl bg-cyan-950/20 border border-cyan-500/20 space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <label className="font-bold text-cyan-300 flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-cyan-400" /> Upload Medical Report (PDF/Image)
+                  </label>
+                  {healthRecordForm.file && (
+                    <button
+                      type="button"
+                      onClick={handleAiExtractForForm}
+                      disabled={isAiExtracting}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-[11px] flex items-center gap-1.5 transition cursor-pointer shadow-md"
+                    >
+                      {isAiExtracting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      Auto-Extract with MedIntel AI
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={handleHealthRecordFileChange}
+                  className="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyan-500/20 file:text-cyan-300 hover:file:bg-cyan-500/30 cursor-pointer"
+                />
+                {healthRecordForm.file_name && (
+                  <p className="text-[11px] text-cyan-400 font-mono">
+                    Attached file: {healthRecordForm.file_name}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setHealthRecordModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 font-bold text-slate-300 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold shadow-lg shadow-cyan-500/20 transition cursor-pointer"
+                >
+                  {healthRecordForm.id ? "Save Changes" : "Add to Timeline"}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* VIEW HEALTH RECORD DETAIL MODAL */}
+      {viewRecordDetailModalOpen && selectedRecordDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`w-full max-w-xl p-6 rounded-2xl border shadow-2xl my-8 ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}
+          >
+            <div className="flex items-center justify-between border-b pb-4 mb-4 border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                  {selectedRecordDetail.event_type || 'Record'}
+                </span>
+                <span className="text-xs font-mono text-slate-400">{selectedRecordDetail.event_date}</span>
+              </div>
+              <button
+                onClick={() => setViewRecordDetailModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <h3 className="text-xl font-bold text-slate-100 mb-2">{selectedRecordDetail.title}</h3>
+
+            <div className="space-y-3 text-xs">
+              {(selectedRecordDetail.doctor_name || selectedRecordDetail.hospital_name) && (
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5 space-y-1">
+                  {selectedRecordDetail.doctor_name && (
+                    <p className="flex items-center gap-2 text-slate-300 font-semibold">
+                      <Stethoscope className="w-4 h-4 text-cyan-400" /> {selectedRecordDetail.doctor_name}
+                    </p>
+                  )}
+                  {selectedRecordDetail.hospital_name && (
+                    <p className="flex items-center gap-2 text-slate-400">
+                      <Building2 className="w-4 h-4 text-indigo-400" /> {selectedRecordDetail.hospital_name}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {selectedRecordDetail.reason && (
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5">
+                  <span className="font-bold text-slate-400 block mb-1">Reason for Visit:</span>
+                  <p className="text-slate-200">{selectedRecordDetail.reason}</p>
+                </div>
+              )}
+
+              {selectedRecordDetail.diagnosis && (
+                <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-500/20">
+                  <span className="font-bold text-cyan-400 block mb-1">Diagnosis & Findings:</span>
+                  <p className="text-cyan-100">{selectedRecordDetail.diagnosis}</p>
+                </div>
+              )}
+
+              {selectedRecordDetail.tests && (
+                <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-500/20">
+                  <span className="font-bold text-purple-400 block mb-1">Test Results & Investigations:</span>
+                  <p className="text-purple-200">{selectedRecordDetail.tests}</p>
+                </div>
+              )}
+
+              {selectedRecordDetail.medications && (
+                <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/20">
+                  <span className="font-bold text-emerald-400 block mb-1">Medications:</span>
+                  <p className="text-emerald-200">{selectedRecordDetail.medications}</p>
+                </div>
+              )}
+
+              {selectedRecordDetail.notes && (
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-white/5">
+                  <span className="font-bold text-slate-400 block mb-1">Notes:</span>
+                  <p className="text-slate-300">{selectedRecordDetail.notes}</p>
+                </div>
+              )}
+
+              {selectedRecordDetail.file_name && (
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
+                  <span className="font-semibold text-cyan-300 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-cyan-400" /> {selectedRecordDetail.file_name}
+                  </span>
+                  {selectedRecordDetail.s3_url && (
+                    <a
+                      href={selectedRecordDetail.s3_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 font-bold hover:bg-cyan-500/30 transition flex items-center gap-1"
+                    >
+                      View <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-between items-center pt-4 mt-4 border-t border-slate-800">
+              <button
+                onClick={() => handleDeleteHealthRecord(selectedRecordDetail.id)}
+                className="px-3 py-2 rounded-xl bg-rose-950/50 hover:bg-rose-900 text-rose-300 font-bold text-xs flex items-center gap-1 transition cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete Record
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setViewRecordDetailModalOpen(false);
+                    handleOpenEditRecordModal(selectedRecordDetail);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs flex items-center gap-1 transition cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5" /> Edit Record
+                </button>
+                <button
+                  onClick={() => setViewRecordDetailModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs hover:bg-cyan-400 transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </motion.div>
         </div>
