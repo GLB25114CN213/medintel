@@ -143,13 +143,25 @@ app.post("/analyze", (req, res) => {
       let responseText = "";
       let lastError = "";
 
-      // ── ULTRA-FAST ENGINE SELECTION ──
-      // 1. Gemini Vision Priority (Sub-second multimodal visual & layout extraction)
-      if (googleAI) {
+      // ── PRIMARY ENGINE: Qwen 3.6 (qwen/qwen3.6-27b) ──
+      try {
+        console.log("⚡ [PRIMARY] Calling Qwen 3.6 (qwen/qwen3.6-27b)...");
+        responseText = await callQwen36({ promptText, isJson: true });
+        if (responseText) {
+          console.log("✅ [PRIMARY] Qwen 3.6 (qwen/qwen3.6-27b) response received successfully!");
+        }
+      } catch (e) {
+        console.error("⚠️ [PRIMARY] Qwen 3.6 error:", e.message);
+        lastError = `Qwen 3.6: ${e.message}`;
+      }
+
+      // ── SECONDARY ENGINE (FALLBACK ONLY IF QWEN 3.6 FAILS): Gemini ──
+      if (!responseText && googleAI) {
+        console.log("⚠️ [FALLBACK] Qwen 3.6 failed or unavailable. Falling back to Gemini...");
         const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
         for (const gModel of geminiModels) {
           try {
-            console.log(`⚡ Calling Gemini (${gModel})...`);
+            console.log(`⚡ [FALLBACK] Calling Gemini (${gModel})...`);
             const parts = isImage
               ? [
                   { inlineData: { mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg", data: rawBuffer.toString("base64") } },
@@ -164,24 +176,13 @@ app.post("/analyze", (req, res) => {
             });
             responseText = geminiRes.text || "";
             if (responseText) {
-              console.log(`✅ Gemini (${gModel}) ultra-fast response received`);
+              console.log(`✅ [FALLBACK] Gemini (${gModel}) response received successfully!`);
               break;
             }
           } catch (e) {
-            console.error(`Gemini error (${gModel}):`, e.message);
+            console.error(`⚠️ Gemini fallback error (${gModel}):`, e.message);
             lastError = `Gemini (${gModel}): ${e.message}`;
           }
-        }
-      }
-
-      // 2. Qwen 3.6 (qwen/qwen3.6-27b) Engine Fallback
-      if (!responseText) {
-        try {
-          console.log("⚡ Calling Qwen 3.6 (qwen/qwen3.6-27b)...");
-          responseText = await callQwen36({ promptText, isJson: true });
-        } catch (e) {
-          console.error("Qwen 3.6 error:", e.message);
-          lastError = `Qwen 3.6: ${e.message}`;
         }
       }
 
@@ -227,7 +228,7 @@ app.post("/api/chat", async (req, res) => {
       return res.status(400).json({ success: false, error: "Messages required." });
     }
 
-    const { googleAI, groq } = getAiClients();
+    const { googleAI } = getAiClients();
 
     const safeMessages = messages.slice(-12).map(m => ({
       role: m.role === "user" ? "user" : "assistant",
@@ -249,11 +250,30 @@ PATIENT REPORT:
 
     let reply = "";
 
-    // 1. Ultra-Fast Gemini 2.0 Flash Engine (< 0.5s response time)
-    if (googleAI) {
+    // ── PRIMARY ENGINE: Qwen 3.6 (qwen/qwen3.6-27b) ──
+    try {
+      console.log("⚡ [PRIMARY] Calling Qwen 3.6 chat (qwen/qwen3.6-27b)...");
+      reply = await callQwen36({
+        promptText: "",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...safeMessages,
+        ]
+      });
+      if (reply) {
+        console.log("✅ [PRIMARY] Qwen 3.6 chat response received successfully!");
+      }
+    } catch (e) {
+      console.error("⚠️ [PRIMARY] Qwen 3.6 chat error:", e.message);
+    }
+
+    // ── SECONDARY ENGINE (FALLBACK ONLY IF QWEN 3.6 FAILS): Gemini ──
+    if (!reply && googleAI) {
+      console.log("⚠️ [FALLBACK] Qwen 3.6 chat failed. Falling back to Gemini...");
       const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
       for (const gModel of geminiModels) {
         try {
+          console.log(`⚡ [FALLBACK] Calling Gemini chat (${gModel})...`);
           const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
           const r = await googleAI.models.generateContent({
             model: gModel,
@@ -262,24 +282,8 @@ PATIENT REPORT:
           reply = r.text || "";
           if (reply) break;
         } catch (e) {
-          console.error(`Gemini chat error (${gModel}):`, e.message);
+          console.error(`⚠️ Gemini chat fallback error (${gModel}):`, e.message);
         }
-      }
-    }
-
-    // 2. Qwen 3.6 (qwen/qwen3.6-27b) Fallback
-    if (!reply) {
-      try {
-        console.log("⚡ Calling Qwen 3.6 chat (qwen/qwen3.6-27b)...");
-        reply = await callQwen36({
-          promptText: "",
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...safeMessages,
-          ]
-        });
-      } catch (e) {
-        console.error("Qwen 3.6 chat error:", e.message);
       }
     }
 
