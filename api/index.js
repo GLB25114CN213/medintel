@@ -3,11 +3,10 @@ import cors from "cors";
 import multer from "multer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { GoogleGenAI } from "@google/genai";
 import { buildMedicalPrompt } from "../server/prompt.js";
 import { runQuery, getQuery, allQuery } from "../server/db.js";
 import { uploadToS3 } from "../server/s3.js";
-import { callQwen36 } from "../server/qwen.js";
+import { analyzeMedicalReport, chatWithMedicalAssistant } from "../server/qwen.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "medintel-secret-key-2026";
 
@@ -42,13 +41,6 @@ const optionalAuthenticateToken = (req, res, next) => {
     next();
   });
 };
-
-function getAiClients() {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const googleAI = geminiKey && geminiKey.trim() ? new GoogleGenAI({ apiKey: geminiKey.trim() }) : null;
-
-  return { googleAI };
-}
 
 // ── AUTHENTICATION ENDPOINTS (VERCEL SUPPORT) ─────────────────────
 app.post("/api/auth/register", async (req, res) => {
@@ -109,19 +101,11 @@ app.post("/analyze", (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded." });
 
-      const { googleAI, groq } = getAiClients();
       const originalName = req.file.originalname || "document";
       const ext = ("." + (originalName.split(".").pop() || "")).toLowerCase();
       let mimeType = req.file.mimetype || "application/octet-stream";
       const rawBuffer = req.file.buffer;
 
-      const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".bmp", ".tiff"];
-      if ([".jpg", ".jpeg", ".heic"].includes(ext)) mimeType = "image/jpeg";
-      else if (ext === ".png")  mimeType = "image/png";
-      else if (ext === ".webp") mimeType = "image/webp";
-      else if (ext === ".pdf")  mimeType = "application/pdf";
-
-      const isImage = IMAGE_EXTS.includes(ext) || mimeType.startsWith("image/");
       const isPDF   = mimeType === "application/pdf" || ext === ".pdf";
 
       let extractedText = (req.body?.clientOcrText || "").trim();
@@ -140,56 +124,12 @@ app.post("/analyze", (req, res) => {
       }
 
       const promptText = buildMedicalPrompt(extractedText.substring(0, 10000));
-      let responseText = "";
-      let lastError = "";
-
-      // ── PRIMARY ENGINE: Qwen 3.6 (qwen/qwen3.6-27b) ──
-      try {
-        console.log("⚡ [PRIMARY] Calling Qwen 3.6 (qwen/qwen3.6-27b)...");
-        responseText = await callQwen36({ promptText, isJson: true });
-        if (responseText) {
-          console.log("✅ [PRIMARY] Qwen 3.6 (qwen/qwen3.6-27b) response received successfully!");
-        }
-      } catch (e) {
-        console.error("⚠️ [PRIMARY] Qwen 3.6 error:", e.message);
-        lastError = `Qwen 3.6: ${e.message}`;
-      }
-
-      // ── SECONDARY ENGINE (FALLBACK ONLY IF QWEN 3.6 FAILS): Gemini ──
-      if (!responseText && googleAI) {
-        console.log("⚠️ [FALLBACK] Qwen 3.6 failed or unavailable. Falling back to Gemini...");
-        const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
-        for (const gModel of geminiModels) {
-          try {
-            console.log(`⚡ [FALLBACK] Calling Gemini (${gModel})...`);
-            const parts = isImage
-              ? [
-                  { inlineData: { mimeType: mimeType.startsWith("image/") ? mimeType : "image/jpeg", data: rawBuffer.toString("base64") } },
-                  { text: promptText },
-                ]
-              : [{ text: promptText }];
-
-            const geminiRes = await googleAI.models.generateContent({
-              model: gModel,
-              contents: [{ role: "user", parts }],
-              config: { generationConfig: { responseMimeType: "application/json" } },
-            });
-            responseText = geminiRes.text || "";
-            if (responseText) {
-              console.log(`✅ [FALLBACK] Gemini (${gModel}) response received successfully!`);
-              break;
-            }
-          } catch (e) {
-            console.error(`⚠️ Gemini fallback error (${gModel}):`, e.message);
-            lastError = `Gemini (${gModel}): ${e.message}`;
-          }
-        }
-      }
+      const responseText = await analyzeMedicalReport(promptText);
 
       if (!responseText) {
         return res.status(503).json({
           success: false,
-          error: lastError || "AI analysis service is temporarily busy. Please try again in a moment.",
+          error: "AI analysis is temporarily unavailable. Please try again.",
         });
       }
 
@@ -228,8 +168,6 @@ app.post("/api/chat", async (req, res) => {
       return res.status(400).json({ success: false, error: "Messages required." });
     }
 
-    const { googleAI } = getAiClients();
-
     const safeMessages = messages.slice(-12).map(m => ({
       role: m.role === "user" ? "user" : "assistant",
       content: typeof m.content === "string" ? m.content.substring(0, 2000) : "",
@@ -248,49 +186,14 @@ PATIENT REPORT:
 
     const systemPrompt = `You are MedIntel AI, a compassionate, expert medical assistant.\n${ctxBlock}\nCRITICAL INSTRUCTIONS:\n- Provide ONLY the direct, genuine, clear, and empathetic medical answer to the user.\n- DO NOT output internal thinking processes, <think> tags, reasoning steps, or meta commentary.\n- Keep responses directly helpful, concise, and accurate. Always advise consulting a qualified physician.`;
 
-    let reply = "";
+    let reply = await chatWithMedicalAssistant(systemPrompt, safeMessages);
 
-    // ── PRIMARY ENGINE: Qwen 3.6 (qwen/qwen3.6-27b) ──
-    try {
-      console.log("⚡ [PRIMARY] Calling Qwen 3.6 chat (qwen/qwen3.6-27b)...");
-      reply = await callQwen36({
-        promptText: "",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...safeMessages,
-        ]
-      });
-      if (reply) {
-        console.log("✅ [PRIMARY] Qwen 3.6 chat response received successfully!");
-      }
-    } catch (e) {
-      console.error("⚠️ [PRIMARY] Qwen 3.6 chat error:", e.message);
+    if (!reply) {
+      reply = "AI chat is temporarily unavailable. Please try again.";
+    } else {
+      reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<\?xml[\s\S]*?\?>/gi, "").trim();
     }
 
-    // ── SECONDARY ENGINE (FALLBACK ONLY IF QWEN 3.6 FAILS): Gemini ──
-    if (!reply && googleAI) {
-      console.log("⚠️ [FALLBACK] Qwen 3.6 chat failed. Falling back to Gemini...");
-      const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
-      for (const gModel of geminiModels) {
-        try {
-          console.log(`⚡ [FALLBACK] Calling Gemini chat (${gModel})...`);
-          const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
-          const r = await googleAI.models.generateContent({
-            model: gModel,
-            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-          });
-          reply = r.text || "";
-          if (reply) break;
-        } catch (e) {
-          console.error(`⚠️ Gemini chat fallback error (${gModel}):`, e.message);
-        }
-      }
-    }
-
-    // Clean internal thinking tags and extra whitespace
-    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<\?xml[\s\S]*?\?>/gi, "").trim();
-
-    if (!reply) reply = "AI chat is temporarily unavailable. Please try again.";
     return res.json({ success: true, message: { role: "assistant", content: reply } });
 
   } catch (e) {

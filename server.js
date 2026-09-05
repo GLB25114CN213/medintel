@@ -1,7 +1,7 @@
 /**
  * MedIntel AI – Production Backend Server
  * Image Pipeline: Dual-Pass Sharp Image Pre-Processing + Tesseract.js OCR
- * AI Engine: Gemini 2.0 Flash Vision (Primary) + Qwen 3.6 (qwen/qwen3.6-27b)
+ * AI Engine: Qwen 3.6 27B via Groq API (groq-sdk)
  */
 
 import express from "express";
@@ -12,7 +12,6 @@ import path from "path";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import pdfParse from "pdf-parse";
 import Tesseract from "tesseract.js";
@@ -21,7 +20,7 @@ import jwt from "jsonwebtoken";
 import { uploadToS3 } from "./server/s3.js";
 import db, { runQuery, getQuery, allQuery } from "./server/db.js";
 import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./server/authMiddleware.js";
-import { callQwen36 } from "./server/qwen.js";
+import { analyzeMedicalReport, chatWithMedicalAssistant } from "./server/qwen.js";
 
 dotenv.config();
 
@@ -77,9 +76,10 @@ const upload = multer({
   fileFilter: (_req, _file, cb) => cb(null, true),
 });
 
-// ── AI CLIENTS ───────────────────────────────────────────────────
-const geminiApiKey = process.env.GEMINI_API_KEY;
-const googleAI     = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
+console.log("🚀 MedIntel Backend starting...");
+console.log("   AI Engine              : Qwen 3.6 27B via Groq API (groq-sdk) ✅");
+console.log("   Dual-Pass OCR Engine   : Tesseract.js ✅");
+console.log("   Image Processing       : Sharp ✅");ull;
 
 console.log("🚀 MedIntel Backend starting...");
 console.log(`   Gemini 2.0 Flash Vision : ${googleAI ? "✅ READY" : "⚠️ OFF"}`);
@@ -252,52 +252,10 @@ app.post(
       }
 
       const promptText = buildMedicalPrompt(ocrText.substring(0, 12000));
-      let responseText = "";
-
-      // ── 1. PRIMARY ENGINE: Qwen 3.6 (qwen/qwen3.6-27b) via Groq SDK ──
-      try {
-        console.log("   ⚡ [PRIMARY] Calling Qwen 3.6 (qwen/qwen3.6-27b)...");
-        responseText = await callQwen36({ promptText, isJson: true });
-        if (responseText) {
-          console.log("   ✅ [PRIMARY] Qwen 3.6 (qwen/qwen3.6-27b) success!");
-        }
-      } catch (qwenErr) {
-        console.error("   ⚠️ [PRIMARY] Qwen 3.6 failed:", qwenErr.message);
-      }
-
-      // ── 2. SECONDARY ENGINE (FALLBACK ONLY IF QWEN 3.6 FAILS): Gemini Vision ──
-      if (!responseText && googleAI) {
-        console.log("   ⚠️ [FALLBACK] Qwen 3.6 unavailable/failed. Falling back to Gemini...");
-        const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
-        for (const gModel of geminiModels) {
-          try {
-            console.log(`   ⚡ [FALLBACK] Calling Gemini Vision (${gModel})...`);
-            const geminiRes = await googleAI.models.generateContent({
-              model: gModel,
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    ...(isImage ? [{ inlineData: { mimeType: "image/jpeg", data: rawBuffer.toString("base64") } }] : []),
-                    { text: promptText },
-                  ],
-                },
-              ],
-              config: { generationConfig: { responseMimeType: "application/json" } },
-            });
-            responseText = geminiRes.text || "";
-            if (responseText) {
-              console.log(`   ✅ [FALLBACK] Gemini Vision (${gModel}) success!`);
-              break;
-            }
-          } catch (geminiErr) {
-            console.error(`   ⚠️ Gemini Vision (${gModel}) fallback failed:`, geminiErr.message);
-          }
-        }
-      }
+      const responseText = await analyzeMedicalReport(promptText);
 
       if (!responseText) {
-        return res.status(503).json({ success: false, error: "AI services unavailable. Please try again." });
+        return res.status(503).json({ success: false, error: "AI analysis is temporarily unavailable. Please try again." });
       }
 
       // ── Parse & Validate JSON ────────────────────────────────────
@@ -385,49 +343,13 @@ PATIENT REPORT CONTEXT:
 
     const systemPrompt = `You are MedIntel AI, a compassionate expert medical assistant.\n${ctxBlock}\nCRITICAL INSTRUCTIONS:\n- Provide ONLY the direct, genuine, clear, and empathetic medical answer to the user.\n- DO NOT output internal thinking processes, <think> tags, reasoning steps, or meta commentary.\n- Keep responses directly helpful, concise, and accurate. Always advise consulting a qualified doctor.`;
 
-    let reply = "";
+    let reply = await chatWithMedicalAssistant(systemPrompt, safeMessages);
 
-    // ── 1. PRIMARY ENGINE: Qwen 3.6 (qwen/qwen3.6-27b) via Groq SDK ──
-    try {
-      console.log("   ⚡ [PRIMARY] Calling Qwen 3.6 chat (qwen/qwen3.6-27b)...");
-      reply = await callQwen36({
-        promptText: "",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...safeMessages,
-        ]
-      });
-      if (reply) {
-        console.log("   ✅ [PRIMARY] Qwen 3.6 chat success!");
-      }
-    } catch (e) {
-      console.error("   ⚠️ [PRIMARY] Qwen 3.6 chat error:", e.message);
+    if (!reply) {
+      reply = "AI chat is temporarily unavailable. Please try again.";
+    } else {
+      reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<\?xml[\s\S]*?\?>/gi, "").trim();
     }
-
-    // ── 2. SECONDARY ENGINE (FALLBACK ONLY IF QWEN 3.6 FAILS): Gemini ──
-    if (!reply && googleAI) {
-      console.log("   ⚠️ [FALLBACK] Qwen 3.6 chat failed. Falling back to Gemini...");
-      const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
-      for (const gModel of geminiModels) {
-        try {
-          console.log(`   ⚡ [FALLBACK] Calling Gemini chat (${gModel})...`);
-          const fullPrompt = `${systemPrompt}\n\nUser: ${safeMessages[safeMessages.length - 1].content}`;
-          const r = await googleAI.models.generateContent({
-            model: gModel,
-            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-          });
-          reply = r.text || "";
-          if (reply) break;
-        } catch (e) {
-          console.error(`   ⚠️ Gemini chat fallback error (${gModel}):`, e.message);
-        }
-      }
-    }
-
-    // Clean internal thinking tags and extra whitespace
-    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^<\?xml[\s\S]*?\?>/gi, "").trim();
-
-    if (!reply) reply = "AI chat is temporarily unavailable. Please try again.";
 
     if (req.user?.id) {
       try {

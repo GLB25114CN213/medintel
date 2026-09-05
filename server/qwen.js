@@ -1,86 +1,95 @@
 /**
- * MedIntel AI – Qwen 3.6 Primary AI Client
- * Primary Provider: Groq SDK (model: qwen/qwen3.6-27b)
- * Secondary Provider: OpenRouter (model: qwen/qwen3.6-27b)
+ * MedIntel AI – Centralized Qwen 3.6 27B AI Module
+ * Provider: Groq API (via official groq-sdk)
+ * Primary Model: qwen/qwen3.6-27b
  */
 
 import Groq from "groq-sdk";
 
-export async function callQwen36({ promptText, isJson = false, messages = [] }) {
-  const groqKey = (process.env.GROQ_API_KEY || "").trim();
-  const openRouterKey = (process.env.OPENROUTER_API_KEY || process.env.QWEN_API_KEY || "").trim();
-  const primaryModel = process.env.AI_MODEL || "qwen/qwen3.6-27b";
+function getGroqClient() {
+  const apiKey = (process.env.GROQ_API_KEY || "").trim();
+  if (!apiKey) return null;
+  return new Groq({ apiKey });
+}
 
-  const payloadMessages = messages.length > 0 
-    ? messages 
-    : [{ role: "user", content: promptText }];
-
-  // 1. Direct Groq Integration via Groq SDK
-  if (groqKey) {
-    const groq = new Groq({ apiKey: groqKey });
-    const groqModels = [primaryModel, "qwen/qwen3.6-27b", "qwen-2.5-72b-instruct"];
-
-    for (const modelName of groqModels) {
-      try {
-        console.log(`⚡ [PRIMARY: GROQ SDK] Calling Qwen 3.6 (${modelName})...`);
-        const bodyObj = {
-          model: modelName,
-          messages: payloadMessages,
-          temperature: 0.1,
-          max_tokens: 3000,
-        };
-        if (isJson) bodyObj.response_format = { type: "json_object" };
-
-        const res = await groq.chat.completions.create(bodyObj);
-        const text = res.choices?.[0]?.message?.content || "";
-        if (text) {
-          console.log(`✅ [PRIMARY: GROQ SDK] Qwen 3.6 (${modelName}) success!`);
-          return text;
-        }
-      } catch (err) {
-        console.error(`⚠️ [GROQ SDK Error] (${modelName}):`, err.message);
-      }
-    }
+/**
+ * Analyzes medical report text using Qwen 3.6 27B on Groq
+ */
+export async function analyzeMedicalReport(promptText) {
+  const groq = getGroqClient();
+  if (!groq) {
+    console.error("❌ Groq API Key missing in environment (GROQ_API_KEY).");
+    return null;
   }
 
-  // 2. OpenRouter Fallback for Qwen 3.6 if OpenRouter key exists
-  if (openRouterKey) {
-    const openRouterModels = [primaryModel, "qwen/qwen3.6-27b", "qwen/qwen3.6-flash"];
-    for (const modelName of openRouterModels) {
-      try {
-        console.log(`⚡ [OPENROUTER] Calling Qwen 3.6 (${modelName})...`);
-        const bodyObj = {
-          model: modelName,
-          messages: payloadMessages,
-          temperature: 0.1,
-          max_tokens: 3000,
-        };
-        if (isJson) bodyObj.response_format = { type: "json_object" };
+  const modelName = process.env.AI_MODEL || "qwen/qwen3.6-27b";
 
-        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${openRouterKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://medintel.vercel.app",
-            "X-Title": "MedIntel AI"
-          },
-          body: JSON.stringify(bodyObj)
-        });
+  try {
+    console.log(`⚡ [GROQ QWEN 3.6 27B] Analyzing report with model: ${modelName}...`);
+    const response = await groq.chat.completions.create({
+      model: modelName,
+      messages: [{ role: "user", content: promptText }],
+      response_format: { type: "json_object" },
+      max_tokens: 3500,
+      temperature: 0.1,
+    });
 
-        if (res.ok) {
-          const data = await res.json();
-          const text = data.choices?.[0]?.message?.content || "";
-          if (text) {
-            console.log(`✅ [OPENROUTER] Qwen 3.6 (${modelName}) success!`);
-            return text;
-          }
-        }
-      } catch (err) {
-        console.error(`⚠️ [OPENROUTER Error] (${modelName}):`, err.message);
-      }
+    const text = response.choices?.[0]?.message?.content || "";
+    if (text) {
+      console.log(`✅ [GROQ QWEN 3.6 27B] Analysis complete.`);
+      return text;
     }
+  } catch (err) {
+    console.error(`❌ [GROQ QWEN 3.6 27B Error]:`, err.message);
   }
 
   return null;
+}
+
+/**
+ * Interactive medical chat assistant powered by Qwen 3.6 27B on Groq
+ */
+export async function chatWithMedicalAssistant(systemPrompt, safeMessages = []) {
+  const groq = getGroqClient();
+  if (!groq) {
+    console.error("❌ Groq API Key missing in environment (GROQ_API_KEY).");
+    return null;
+  }
+
+  const modelName = process.env.AI_MODEL || "qwen/qwen3.6-27b";
+
+  try {
+    console.log(`⚡ [GROQ QWEN 3.6 27B] Generating chat response with model: ${modelName}...`);
+    const response = await groq.chat.completions.create({
+      model: modelName,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...safeMessages,
+      ],
+      max_tokens: 1500,
+      temperature: 0.2,
+    });
+
+    const text = response.choices?.[0]?.message?.content || "";
+    if (text) {
+      console.log(`✅ [GROQ QWEN 3.6 27B] Chat response generated.`);
+      return text;
+    }
+  } catch (err) {
+    console.error(`❌ [GROQ QWEN 3.6 27B Chat Error]:`, err.message);
+  }
+
+  return null;
+}
+
+/**
+ * Shared compatibility wrapper
+ */
+export async function callQwen36({ promptText, isJson = false, messages = [] }) {
+  if (messages && messages.length > 0) {
+    const sysMsg = messages.find(m => m.role === "system")?.content || "";
+    const userMsgs = messages.filter(m => m.role !== "system");
+    return chatWithMedicalAssistant(sysMsg, userMsgs);
+  }
+  return analyzeMedicalReport(promptText);
 }
