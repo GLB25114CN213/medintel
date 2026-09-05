@@ -4,9 +4,8 @@ import multer from "multer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { buildMedicalPrompt } from "../server/prompt.js";
-import { runQuery, getQuery, allQuery } from "../server/db.js";
 import { uploadToS3 } from "../server/s3.js";
-import { analyzeMedicalReport, chatWithMedicalAssistant } from "../server/qwen.js";
+import { analyzeMedicalReport, chatWithMedicalAssistant } from "../server/gemini.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "medintel-secret-key-2026";
 

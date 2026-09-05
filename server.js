@@ -1,7 +1,7 @@
 /**
  * MedIntel AI – Production Backend Server
  * Image Pipeline: Dual-Pass Sharp Image Pre-Processing + Tesseract.js OCR
- * AI Engine: Qwen 3.6 27B via Groq API (groq-sdk)
+ * AI Engine: Google Gemini API (gemini-3.6-flash)
  */
 
 import express from "express";
@@ -20,7 +20,7 @@ import jwt from "jsonwebtoken";
 import { uploadToS3 } from "./server/s3.js";
 import db, { runQuery, getQuery, allQuery } from "./server/db.js";
 import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./server/authMiddleware.js";
-import { analyzeMedicalReport, chatWithMedicalAssistant } from "./server/qwen.js";
+import { analyzeMedicalReport, chatWithMedicalAssistant } from "./server/gemini.js";
 
 dotenv.config();
 
@@ -77,15 +77,9 @@ const upload = multer({
 });
 
 console.log("🚀 MedIntel Backend starting...");
-console.log("   AI Engine              : Qwen 3.6 27B via Groq API (groq-sdk) ✅");
+console.log(`   AI Engine              : Google Gemini API (${process.env.GEMINI_MODEL || "gemini-3.6-flash"}) ✅`);
 console.log("   Dual-Pass OCR Engine   : Tesseract.js ✅");
-console.log("   Image Processing       : Sharp ✅");ull;
-
-console.log("🚀 MedIntel Backend starting...");
-console.log(`   Gemini 2.0 Flash Vision : ${googleAI ? "✅ READY" : "⚠️ OFF"}`);
-console.log(`   Qwen 3.6 (qwen3.6-27b)  : ✅ READY (OpenRouter API)`);
-console.log("   Dual-Pass OCR Engine    : Tesseract.js ✅");
-console.log("   Image Processing        : Sharp ✅");
+console.log("   Image Processing       : Sharp ✅");
 
 // ── INPUT VALIDATION ─────────────────────────────────────────────
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
