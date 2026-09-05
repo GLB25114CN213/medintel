@@ -28,6 +28,16 @@ function logAiError({ provider, model, endpoint, status, message, durationMs }) 
   console.error(`Duration : ${durationMs}ms\n`);
 }
 
+function cleanQwenOutput(rawText) {
+  if (!rawText) return "";
+  return rawText
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+}
+
 /**
  * Analyzes medical report text using Qwen 3.6 27B on Groq
  */
@@ -55,12 +65,11 @@ export async function analyzeMedicalReport(promptText, endpoint = "/analyze") {
       const response = await groq.chat.completions.create({
         model,
         messages: [{ role: "user", content: promptText }],
-        response_format: { type: "json_object" },
-        max_tokens: 3500,
+        max_tokens: 950,
         temperature: 0.1,
       });
 
-      const text = response.choices?.[0]?.message?.content || "";
+      const text = cleanQwenOutput(response.choices?.[0]?.message?.content || "");
       if (text) {
         console.log(`✅ [GROQ] Response received successfully in ${Date.now() - t0}ms`);
         return text;
@@ -92,15 +101,14 @@ export async function analyzeMedicalReport(promptText, endpoint = "/analyze") {
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: promptText }],
-          response_format: { type: "json_object" },
           temperature: 0.1,
-          max_tokens: 3500,
+          max_tokens: 950,
         })
       });
 
       if (res.ok) {
         const data = await res.json();
-        const text = data.choices?.[0]?.message?.content || "";
+        const text = cleanQwenOutput(data.choices?.[0]?.message?.content || "");
         if (text) {
           console.log(`✅ [OPENROUTER] Response received successfully in ${Date.now() - t0}ms`);
           return text;
@@ -161,11 +169,11 @@ export async function chatWithMedicalAssistant(systemPrompt, safeMessages = [], 
           { role: "system", content: systemPrompt },
           ...safeMessages,
         ],
-        max_tokens: 1500,
+        max_tokens: 950,
         temperature: 0.2,
       });
 
-      const text = response.choices?.[0]?.message?.content || "";
+      const text = cleanQwenOutput(response.choices?.[0]?.message?.content || "");
       if (text) {
         console.log(`✅ [GROQ] Chat response received in ${Date.now() - t0}ms`);
         return text;
@@ -201,13 +209,13 @@ export async function chatWithMedicalAssistant(systemPrompt, safeMessages = [], 
             ...safeMessages,
           ],
           temperature: 0.2,
-          max_tokens: 1500,
+          max_tokens: 950,
         })
       });
 
       if (res.ok) {
         const data = await res.json();
-        const text = data.choices?.[0]?.message?.content || "";
+        const text = cleanQwenOutput(data.choices?.[0]?.message?.content || "");
         if (text) {
           console.log(`✅ [OPENROUTER] Chat response received in ${Date.now() - t0}ms`);
           return text;
