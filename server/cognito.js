@@ -48,7 +48,7 @@ function getJwtVerifier() {
 /**
  * Registers a new user into Amazon Cognito User Pool
  */
-export async function signUpUser(email, password, fullName) {
+export async function signUpUser(email, password, fullName, gender = "Prefer not to say") {
   const { clientId, isConfigured } = getCognitoConfig();
   if (!isConfigured) {
     throw new Error(
@@ -66,6 +66,7 @@ export async function signUpUser(email, password, fullName) {
     UserAttributes: [
       { Name: "email", Value: cleanEmail },
       { Name: "name", Value: fullName.trim() },
+      { Name: "gender", Value: gender },
     ],
   });
 
@@ -143,6 +144,7 @@ export async function authenticateUser(email, password) {
     userSub: attributes.sub || userData.Username,
     email: attributes.email || cleanEmail,
     fullName: attributes.name || attributes.email || "Patient",
+    gender: attributes.gender || "Male",
   };
 }
 

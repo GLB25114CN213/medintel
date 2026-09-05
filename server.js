@@ -92,8 +92,9 @@ import {
 
 // ── INPUT VALIDATION ─────────────────────────────────────────────
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-function validateRegistration(email, password, full_name) {
+function validateRegistration(email, password, full_name, gender) {
   if (!email || !password || !full_name) return "All fields are required.";
+  if (!gender || !gender.trim()) return "Please select a gender.";
   if (!EMAIL_REGEX.test(email.trim())) return "Please enter a valid email address.";
   if (full_name.trim().length < 2) return "Full name must be at least 2 characters.";
   if (password.length < 8) return "Password must be at least 8 characters.";
@@ -103,11 +104,11 @@ function validateRegistration(email, password, full_name) {
 // ── COGNITO AUTH ENDPOINTS ───────────────────────────────────────
 app.post("/api/auth/register", authLimiter, async (req, res) => {
   try {
-    const { email, password, full_name } = req.body;
-    const err = validateRegistration(email, password, full_name);
+    const { email, password, full_name, gender } = req.body;
+    const err = validateRegistration(email, password, full_name, gender);
     if (err) return res.status(400).json({ success: false, error: err });
 
-    const result = await signUpUser(email, password, full_name);
+    const result = await signUpUser(email, password, full_name, gender.trim());
     return res.json({
       success: true,
       requireVerification: true,
@@ -162,8 +163,8 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     if (!patientRow) {
       const pid = "MI-PAT-" + Math.floor(100000 + Math.random() * 900000);
       await runQuery(
-        "INSERT INTO patients (user_id, cognito_sub, patient_id, full_name, email) VALUES (?, ?, ?, ?, ?)",
-        [userRow.id, authResult.userSub, pid, authResult.fullName, authResult.email]
+        "INSERT INTO patients (user_id, cognito_sub, patient_id, full_name, email, gender) VALUES (?, ?, ?, ?, ?, ?)",
+        [userRow.id, authResult.userSub, pid, authResult.fullName, authResult.email, authResult.gender]
       );
       patientRow = await getQuery("SELECT * FROM patients WHERE cognito_sub = ?", [authResult.userSub]);
     }

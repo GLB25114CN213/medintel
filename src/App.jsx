@@ -38,7 +38,7 @@ export default function MedIntelAI() {
   const [token, setToken] = useState(localStorage.getItem('medintel_token') || null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'verify', 'forgot_password', 'reset_password'
-  const [authForm, setAuthForm] = useState({ email: '', password: '', full_name: '', code: '', new_password: '' });
+  const [authForm, setAuthForm] = useState({ email: '', password: '', full_name: '', gender: '', code: '', new_password: '' });
   const [authError, setAuthError] = useState('');
   const [authSuccessMsg, setAuthSuccessMsg] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
@@ -395,7 +395,7 @@ export default function MedIntelAI() {
         const res = await fetch(`${API_BASE}/api/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: authForm.email, password: authForm.password, full_name: authForm.full_name }),
+          body: JSON.stringify({ email: authForm.email, password: authForm.password, full_name: authForm.full_name, gender: authForm.gender }),
         });
         const data = await res.json();
         if (data.success) {
@@ -2522,20 +2522,42 @@ export default function MedIntelAI() {
 
             <form onSubmit={handleAuthSubmit} className="space-y-4">
               {authMode === 'register' && (
-                <div>
-                  <label className="text-xs font-semibold text-slate-400 mb-1 block">Full Name</label>
-                  <div className="relative">
-                    <User className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      required
-                      value={authForm.full_name}
-                      onChange={e => setAuthForm({ ...authForm, full_name: e.target.value })}
-                      placeholder="Aarav Patel"
-                      className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
-                    />
+                <>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400 mb-1 block">Full Name</label>
+                    <div className="relative">
+                      <User className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                      <input
+                        type="text"
+                        required
+                        value={authForm.full_name}
+                        onChange={e => setAuthForm({ ...authForm, full_name: e.target.value })}
+                        placeholder="Aarav Patel"
+                        className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm outline-none transition ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                      />
+                    </div>
                   </div>
-                </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-400 mb-1 block">Gender *</label>
+                    <div className="relative">
+                      <UserCheck className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
+                      <select
+                        required
+                        value={authForm.gender}
+                        onChange={e => setAuthForm({ ...authForm, gender: e.target.value })}
+                        className={`w-full pl-11 pr-10 py-3 rounded-xl border text-sm outline-none transition appearance-none cursor-pointer ${darkMode ? 'bg-slate-900/60 border-slate-800 text-white focus:border-cyan-500' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-cyan-500'}`}
+                      >
+                        <option value="" disabled>Select Gender</option>
+                        <option value="Male" className="bg-slate-900 text-white">Male</option>
+                        <option value="Female" className="bg-slate-900 text-white">Female</option>
+                        <option value="Other" className="bg-slate-900 text-white">Other</option>
+                        <option value="Prefer not to say" className="bg-slate-900 text-white">Prefer not to say</option>
+                      </select>
+                      <ChevronDown className="w-4 h-4 absolute right-4 top-3.5 text-slate-400 pointer-events-none" />
+                    </div>
+                  </div>
+                </>
               )}
 
               {/* Email Address (used in all modes) */}

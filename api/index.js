@@ -29,12 +29,12 @@ const upload = multer({
 // ── COGNITO AUTHENTICATION ENDPOINTS (VERCEL SUPPORT) ─────────────
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { email, password, full_name } = req.body;
-    if (!email || !password || !full_name) {
-      return res.status(400).json({ success: false, error: "All fields are required." });
+    const { email, password, full_name, gender } = req.body;
+    if (!email || !password || !full_name || !gender) {
+      return res.status(400).json({ success: false, error: "All fields including Gender are required." });
     }
 
-    const result = await signUpUser(email, password, full_name);
+    const result = await signUpUser(email, password, full_name, gender.trim());
     return res.json({
       success: true,
       requireVerification: true,
@@ -88,8 +88,8 @@ app.post("/api/auth/login", async (req, res) => {
     if (!patientRow) {
       const pid = "MI-PAT-" + Math.floor(100000 + Math.random() * 900000);
       await runQuery(
-        "INSERT INTO patients (user_id, cognito_sub, patient_id, full_name, email) VALUES (?, ?, ?, ?, ?)",
-        [userRow.id, authResult.userSub, pid, authResult.fullName, authResult.email]
+        "INSERT INTO patients (user_id, cognito_sub, patient_id, full_name, email, gender) VALUES (?, ?, ?, ?, ?, ?)",
+        [userRow.id, authResult.userSub, pid, authResult.fullName, authResult.email, authResult.gender]
       );
       patientRow = await getQuery("SELECT * FROM patients WHERE cognito_sub = ?", [authResult.userSub]);
     }
