@@ -58,10 +58,14 @@ try {
         patient_id TEXT UNIQUE NOT NULL,
         full_name TEXT NOT NULL,
         email TEXT,
+        phone TEXT,
         abha_id TEXT,
         blood_group TEXT,
         emergency_contact TEXT,
+        address TEXT,
         allergies TEXT,
+        known_conditions TEXT,
+        medications TEXT,
         dob TEXT,
         gender TEXT,
         aadhaar_verified INTEGER DEFAULT 0,
@@ -195,11 +199,11 @@ function seedHDIMSData(database) {
     database.run("INSERT INTO doctors (id, doctor_id, full_name, specialty, hospital_name, license_number, email) VALUES (3, 'MI-DOC-8803', 'Dr. Rajesh Verma', 'General Physician', 'City General Hospital', 'MCI-8803-DL', 'rajesh.verma@cityhospital.org')");
 
     // Seed Patients
-    database.run("INSERT INTO patients (id, patient_id, full_name, email, abha_id, blood_group, emergency_contact, allergies, dob, gender, aadhaar_verified) VALUES (1, 'MI-PAT-100245', 'Aarav Patel', 'aarav.patel@example.com', '91-4820-1129-8402', 'O+', '+91 98765 43210', 'Penicillin, Dust Mites', '1990-05-14', 'Male', 1)");
-    database.run("INSERT INTO patients (id, patient_id, full_name, email, abha_id, blood_group, emergency_contact, allergies, dob, gender, aadhaar_verified) VALUES (2, 'MI-PAT-100246', 'Sunita Rao', 'sunita.rao@example.com', '91-8840-2219-9031', 'B+', '+91 98123 45678', 'Sulfa Drugs', '1985-11-22', 'Female', 1)");
-    database.run("INSERT INTO patients (id, patient_id, full_name, email, abha_id, blood_group, emergency_contact, allergies, dob, gender, aadhaar_verified) VALUES (3, 'MI-PAT-100247', 'Rohan Verma', 'rohan.verma@example.com', '91-1029-4482-3301', 'A+', '+91 97654 32109', 'Peanuts', '1995-03-08', 'Male', 1)");
-    database.run("INSERT INTO patients (id, patient_id, full_name, email, abha_id, blood_group, emergency_contact, allergies, dob, gender, aadhaar_verified) VALUES (4, 'MI-PAT-100248', 'Kavita Singh', 'kavita.singh@example.com', '91-7730-1092-4412', 'AB+', '+91 96543 21098', 'None', '1992-08-30', 'Female', 0)");
-    database.run("INSERT INTO patients (id, patient_id, full_name, email, abha_id, blood_group, emergency_contact, allergies, dob, gender, aadhaar_verified) VALUES (5, 'MI-PAT-100249', 'Vikram Malhotra', 'vikram.m@example.com', '91-3320-9981-1204', 'O-', '+91 95432 10987', 'Latex', '1978-12-19', 'Male', 1)");
+    database.run("INSERT INTO patients (id, patient_id, full_name, email, phone, abha_id, blood_group, emergency_contact, address, allergies, known_conditions, medications, dob, gender, aadhaar_verified) VALUES (1, 'MI-PAT-100245', 'Aarav Patel', 'aarav.patel@example.com', '+91 98765 43210', '91-4820-1129-8402', 'O+', '+91 98765 43210', 'Greater Noida, Uttar Pradesh', 'Penicillin, Dust Mites', 'Stage 1 Hypertension, Borderline Hyperlipidemia', 'Amlodipine 5mg (Daily)', '1990-05-14', 'Male', 1)");
+    database.run("INSERT INTO patients (id, patient_id, full_name, email, phone, abha_id, blood_group, emergency_contact, address, allergies, known_conditions, medications, dob, gender, aadhaar_verified) VALUES (2, 'MI-PAT-100246', 'Sunita Rao', 'sunita.rao@example.com', '+91 98123 45678', '91-8840-2219-9031', 'B+', '+91 98123 45678', 'Mumbai, Maharashtra', 'Sulfa Drugs', 'Type 2 Diabetes', 'Metformin 500mg', '1985-11-22', 'Female', 1)");
+    database.run("INSERT INTO patients (id, patient_id, full_name, email, phone, abha_id, blood_group, emergency_contact, address, allergies, known_conditions, medications, dob, gender, aadhaar_verified) VALUES (3, 'MI-PAT-100247', 'Rohan Verma', 'rohan.verma@example.com', '+91 97654 32109', '91-1029-4482-3301', 'A+', '+91 97654 32109', 'Bengaluru, Karnataka', 'Peanuts', 'Asthma', 'Inhaler PRN', '1995-03-08', 'Male', 1)");
+    database.run("INSERT INTO patients (id, patient_id, full_name, email, phone, abha_id, blood_group, emergency_contact, address, allergies, known_conditions, medications, dob, gender, aadhaar_verified) VALUES (4, 'MI-PAT-100248', 'Kavita Singh', 'kavita.singh@example.com', '+91 96543 21098', '91-7730-1092-4412', 'AB+', '+91 96543 21098', 'New Delhi', 'None', 'None', 'None', '1992-08-30', 'Female', 0)");
+    database.run("INSERT INTO patients (id, patient_id, full_name, email, phone, abha_id, blood_group, emergency_contact, address, allergies, known_conditions, medications, dob, gender, aadhaar_verified) VALUES (5, 'MI-PAT-100249', 'Vikram Malhotra', 'vikram.m@example.com', '+91 95432 10987', '91-3320-9981-1204', 'O-', '+91 95432 10987', 'Hyderabad, Telangana', 'Latex', 'Migraine', 'Sumatriptan 50mg', '1978-12-19', 'Male', 1)");
 
     // Seed Visits
     database.run("INSERT INTO visits (patient_id, doctor_id, doctor_name, hospital_name, visit_date, chief_complaint, bp, notes) VALUES ('MI-PAT-100245', 'MI-DOC-8803', 'Dr. Rajesh Verma', 'City General Hospital', '2026-08-12', 'Routine Health Checkup & Mild Fatigue', '135/88 mmHg', 'Patient reports occasional fatigue. Ordered CBC, Lipid Panel & Blood Glucose.')");

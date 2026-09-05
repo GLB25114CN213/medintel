@@ -489,6 +489,61 @@ app.get("/api/hdims/patient/profile", optionalAuthenticateToken, async (req, res
   }
 });
 
+// 1b. Update Patient Profile
+app.put("/api/hdims/patient/profile", optionalAuthenticateToken, async (req, res) => {
+  try {
+    const {
+      patient_id = "MI-PAT-100245",
+      full_name,
+      phone,
+      email,
+      emergency_contact,
+      address,
+      blood_group,
+      allergies,
+      known_conditions,
+      medications,
+    } = req.body;
+
+    let targetPid = patient_id;
+    if (req.user?.id) {
+      const userPatient = await getQuery("SELECT patient_id FROM patients WHERE user_id = ?", [req.user.id]);
+      if (userPatient) targetPid = userPatient.patient_id;
+    }
+
+    await runQuery(
+      `UPDATE patients SET 
+        full_name = COALESCE(?, full_name),
+        phone = COALESCE(?, phone),
+        email = COALESCE(?, email),
+        emergency_contact = COALESCE(?, emergency_contact),
+        address = COALESCE(?, address),
+        blood_group = COALESCE(?, blood_group),
+        allergies = COALESCE(?, allergies),
+        known_conditions = COALESCE(?, known_conditions),
+        medications = COALESCE(?, medications)
+       WHERE patient_id = ?`,
+      [
+        full_name,
+        phone,
+        email,
+        emergency_contact,
+        address,
+        blood_group,
+        allergies,
+        known_conditions,
+        medications,
+        targetPid,
+      ]
+    );
+
+    const updated = await getQuery("SELECT * FROM patients WHERE patient_id = ?", [targetPid]);
+    return res.json({ success: true, message: "Profile updated successfully.", patient: updated });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to update profile." });
+  }
+});
+
 // 2. Aadhaar Identity Verification Simulation
 app.post("/api/hdims/patient/verify-aadhaar", optionalAuthenticateToken, async (req, res) => {
   try {

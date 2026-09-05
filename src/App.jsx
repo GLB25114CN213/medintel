@@ -80,6 +80,55 @@ export default function MedIntelAI() {
   const [aadhaarInput, setAadhaarInput] = useState("");
   const [aadhaarStatusMsg, setAadhaarStatusMsg] = useState("");
   const [sihDemoNotice, setSihDemoNotice] = useState("");
+  const [editProfileModalOpen, setEditProfileModalOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    full_name: "",
+    phone: "",
+    email: "",
+    emergency_contact: "",
+    address: "",
+    blood_group: "",
+    allergies: "",
+    known_conditions: "",
+    medications: "",
+  });
+
+  const openEditProfileModal = () => {
+    setProfileForm({
+      full_name: hdimsPatient.full_name || "",
+      phone: hdimsPatient.phone || "",
+      email: hdimsPatient.email || "",
+      emergency_contact: hdimsPatient.emergency_contact || "",
+      address: hdimsPatient.address || "",
+      blood_group: hdimsPatient.blood_group || "",
+      allergies: hdimsPatient.allergies || "",
+      known_conditions: hdimsPatient.known_conditions || "",
+      medications: hdimsPatient.medications || "",
+    });
+    setEditProfileModalOpen(true);
+  };
+
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE}/api/hdims/patient/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient_id: hdimsPatient.patient_id,
+          ...profileForm,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.patient) {
+        setHdimsPatient(data.patient);
+        setEditProfileModalOpen(false);
+        fetchHdimsPatientRecords();
+      }
+    } catch (e) {
+      alert("Failed to update profile.");
+    }
+  };
 
   // Production AI Chat States
   const [chatHistory, setChatHistory] = useState([
@@ -844,56 +893,6 @@ export default function MedIntelAI() {
           </div>
         </div>
       )}
-
-      {/* SIH DEMO CONTROL BAR */}
-      <div className={`border-b py-2.5 px-4 backdrop-blur-md sticky top-20 z-30 ${darkMode ? 'bg-slate-900/90 border-cyan-500/30 text-slate-200' : 'bg-cyan-50 border-cyan-200 text-slate-800'}`}>
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 font-bold text-cyan-400">
-            <Sparkles className="w-4 h-4 text-cyan-400" />
-            <span>SIH HDIMS DEMO BAR</span>
-            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-              Patient ID: {hdimsPatient.patient_id}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => { setDoctorRole(false); setCurrentPage('hdims_health'); }}
-              className={`px-3 py-1.5 rounded-xl font-semibold transition flex items-center gap-1.5 ${!doctorRole && currentPage === 'hdims_health' ? 'bg-cyan-500 text-white shadow-md' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" /> 1. Patient Health Profile
-            </button>
-            <button
-              onClick={() => { setDoctorRole(false); handleGenerateQR(10); setCurrentPage('hdims_qr'); }}
-              className={`px-3 py-1.5 rounded-xl font-semibold transition flex items-center gap-1.5 ${currentPage === 'hdims_qr' ? 'bg-cyan-500 text-white shadow-md' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}`}
-            >
-              <QrCode className="w-3.5 h-3.5" /> 2. Generate QR
-            </button>
-            <button
-              onClick={() => { setDoctorRole(true); setCurrentPage('hdims_doctor'); }}
-              className={`px-3 py-1.5 rounded-xl font-semibold transition flex items-center gap-1.5 ${doctorRole || currentPage === 'hdims_doctor' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'}`}
-            >
-              <Stethoscope className="w-3.5 h-3.5" /> 3. Doctor Portal
-            </button>
-            <button
-              onClick={async () => {
-                await handleGenerateQR(10);
-                setCurrentPage('hdims_qr');
-                setSihDemoNotice("⚡ Demo Step 1: Temporary QR Generated! Now click '3. Doctor Portal' to simulate Doctor Scan.");
-              }}
-              className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold hover:shadow-lg transition flex items-center gap-1.5"
-            >
-              <Zap className="w-3.5 h-3.5" /> 1-Click SIH Full Journey Demo
-            </button>
-          </div>
-        </div>
-        {sihDemoNotice && (
-          <div className="max-w-7xl mx-auto mt-2 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 p-2 rounded-lg flex items-center justify-between">
-            <span>{sihDemoNotice}</span>
-            <button onClick={() => setSihDemoNotice("")} className="text-slate-400 hover:text-white"><X className="w-3.5 h-3.5" /></button>
-          </div>
-        )}
-      </div>
 
       {/* MAIN CONTENT AREA */}
       <main className="relative z-10">
@@ -1767,6 +1766,12 @@ export default function MedIntelAI() {
 
                   <div className="flex items-center gap-3">
                     <button
+                      onClick={openEditProfileModal}
+                      className="px-4 py-2.5 rounded-xl border border-cyan-500/40 text-cyan-300 font-bold text-sm hover:bg-cyan-500/10 transition flex items-center gap-2"
+                    >
+                      <Settings className="w-4 h-4" /> Edit Profile
+                    </button>
+                    <button
                       onClick={() => { handleGenerateQR(10); setCurrentPage('hdims_qr'); }}
                       className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm shadow-lg shadow-cyan-500/20 hover:scale-[1.02] transition flex items-center gap-2"
                     >
@@ -1775,23 +1780,31 @@ export default function MedIntelAI() {
                   </div>
                 </div>
 
-                {/* Patient Vitals & Demographics */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-6 border-t border-white/10 text-left">
+                {/* Medical Summary Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mt-6 pt-6 border-t border-white/10 text-left">
                   <div>
                     <p className="text-[11px] font-semibold text-slate-400 uppercase">Blood Group</p>
-                    <p className="text-sm font-bold text-rose-400">{hdimsPatient.blood_group}</p>
+                    <p className="text-sm font-bold text-rose-400">{hdimsPatient.blood_group || "Not provided"}</p>
                   </div>
                   <div>
                     <p className="text-[11px] font-semibold text-slate-400 uppercase">Allergies</p>
-                    <p className="text-sm font-bold text-amber-400">{hdimsPatient.allergies}</p>
+                    <p className="text-sm font-bold text-amber-400">{hdimsPatient.allergies || "No known allergies recorded"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Known Conditions</p>
+                    <p className="text-sm font-bold text-cyan-300">{hdimsPatient.known_conditions || "No medical conditions recorded"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Medications</p>
+                    <p className="text-sm font-bold text-indigo-300">{hdimsPatient.medications || "No active medications recorded"}</p>
                   </div>
                   <div>
                     <p className="text-[11px] font-semibold text-slate-400 uppercase">Emergency Contact</p>
-                    <p className="text-sm font-bold text-slate-200">{hdimsPatient.emergency_contact}</p>
+                    <p className="text-sm font-bold text-slate-200">{hdimsPatient.emergency_contact || "Not provided"}</p>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Primary Health ID</p>
-                    <p className="text-sm font-bold text-cyan-400 font-mono">{hdimsPatient.patient_id}</p>
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase">Address</p>
+                    <p className="text-sm font-bold text-slate-300 truncate">{hdimsPatient.address || "Not provided"}</p>
                   </div>
                 </div>
               </div>
@@ -2231,6 +2244,163 @@ export default function MedIntelAI() {
               >
                 Verify Identity & Generate Patient ID
               </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* EDIT PATIENT PROFILE MODAL */}
+      {editProfileModalOpen && (
+        <div className="fixed inset-0 backdrop-blur-md bg-black/70 z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`w-full max-w-xl p-8 rounded-3xl border shadow-2xl relative max-h-[90vh] overflow-y-auto ${darkMode ? 'glass-modal-dark text-white' : 'glass-modal-light text-slate-900'}`}
+          >
+            <button
+              onClick={() => setEditProfileModalOpen(false)}
+              className="absolute top-6 right-6 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mx-auto mb-3 text-cyan-400">
+                <Settings className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-extrabold">Edit Patient Health Profile</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Update your personal, medical, and emergency contact information.
+              </p>
+            </div>
+
+            <form onSubmit={handleSaveProfile} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold text-slate-400 mb-1 block">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={profileForm.full_name}
+                    onChange={e => setProfileForm({ ...profileForm, full_name: e.target.value })}
+                    className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-400 mb-1 block">Blood Group</label>
+                  <select
+                    value={profileForm.blood_group}
+                    onChange={e => setProfileForm({ ...profileForm, blood_group: e.target.value })}
+                    className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  >
+                    <option value="">Select Blood Group</option>
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold text-slate-400 mb-1 block">Phone Number</label>
+                  <input
+                    type="text"
+                    value={profileForm.phone}
+                    onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })}
+                    placeholder="+91 98765 43210"
+                    className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-400 mb-1 block">Email Address</label>
+                  <input
+                    type="email"
+                    value={profileForm.email}
+                    onChange={e => setProfileForm({ ...profileForm, email: e.target.value })}
+                    placeholder="patient@example.com"
+                    className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold text-slate-400 mb-1 block">Emergency Contact</label>
+                  <input
+                    type="text"
+                    value={profileForm.emergency_contact}
+                    onChange={e => setProfileForm({ ...profileForm, emergency_contact: e.target.value })}
+                    placeholder="+91 98765 43210"
+                    className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-400 mb-1 block">Address / Location</label>
+                  <input
+                    type="text"
+                    value={profileForm.address}
+                    onChange={e => setProfileForm({ ...profileForm, address: e.target.value })}
+                    placeholder="City, State"
+                    className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-400 mb-1 block">Known Allergies</label>
+                <input
+                  type="text"
+                  value={profileForm.allergies}
+                  onChange={e => setProfileForm({ ...profileForm, allergies: e.target.value })}
+                  placeholder="e.g. Penicillin, Dust Mites"
+                  className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-400 mb-1 block">Known Medical Conditions</label>
+                <input
+                  type="text"
+                  value={profileForm.known_conditions}
+                  onChange={e => setProfileForm({ ...profileForm, known_conditions: e.target.value })}
+                  placeholder="e.g. Stage 1 Hypertension, Diabetes"
+                  className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-400 mb-1 block">Current Medications</label>
+                <input
+                  type="text"
+                  value={profileForm.medications}
+                  onChange={e => setProfileForm({ ...profileForm, medications: e.target.value })}
+                  placeholder="e.g. Amlodipine 5mg (Daily)"
+                  className={`w-full px-4 py-3 rounded-xl border text-xs outline-none ${darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditProfileModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl border border-white/10 text-slate-300 font-semibold text-xs hover:bg-white/5 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-xs shadow-lg hover:scale-105 transition"
+                >
+                  Save Profile Changes
+                </button>
+              </div>
             </form>
           </motion.div>
         </div>

@@ -320,21 +320,79 @@ PATIENT REPORT:
 
 // ── HDIMS EXTENSION ENDPOINTS ──────────────────────────────────────
 app.get("/api/hdims/patient/profile", async (req, res) => {
-  return res.json({
-    success: true,
-    patient: {
-      patient_id: "MI-PAT-100245",
-      full_name: "Aarav Patel",
-      email: "aarav.patel@example.com",
-      abha_id: "91-4820-1129-8402",
-      blood_group: "O+",
-      emergency_contact: "+91 98765 43210",
-      allergies: "Penicillin, Dust Mites",
-      dob: "1990-05-14",
-      gender: "Male",
-      aadhaar_verified: 1,
+  try {
+    const pid = req.query.patient_id || "MI-PAT-100245";
+    let patient = await getQuery("SELECT * FROM patients WHERE patient_id = ?", [pid]);
+    if (!patient) {
+      patient = {
+        patient_id: "MI-PAT-100245",
+        full_name: "Aarav Patel",
+        email: "aarav.patel@example.com",
+        phone: "+91 98765 43210",
+        abha_id: "91-4820-1129-8402",
+        blood_group: "O+",
+        emergency_contact: "+91 98765 43210",
+        address: "Greater Noida, Uttar Pradesh",
+        allergies: "Penicillin, Dust Mites",
+        known_conditions: "Stage 1 Hypertension, Borderline Hyperlipidemia",
+        medications: "Amlodipine 5mg (Daily)",
+        dob: "1990-05-14",
+        gender: "Male",
+        aadhaar_verified: 1,
+      };
     }
-  });
+    return res.json({ success: true, patient });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to load patient profile." });
+  }
+});
+
+app.put("/api/hdims/patient/profile", async (req, res) => {
+  try {
+    const {
+      patient_id = "MI-PAT-100245",
+      full_name,
+      phone,
+      email,
+      emergency_contact,
+      address,
+      blood_group,
+      allergies,
+      known_conditions,
+      medications,
+    } = req.body;
+
+    await runQuery(
+      `UPDATE patients SET 
+        full_name = COALESCE(?, full_name),
+        phone = COALESCE(?, phone),
+        email = COALESCE(?, email),
+        emergency_contact = COALESCE(?, emergency_contact),
+        address = COALESCE(?, address),
+        blood_group = COALESCE(?, blood_group),
+        allergies = COALESCE(?, allergies),
+        known_conditions = COALESCE(?, known_conditions),
+        medications = COALESCE(?, medications)
+       WHERE patient_id = ?`,
+      [
+        full_name,
+        phone,
+        email,
+        emergency_contact,
+        address,
+        blood_group,
+        allergies,
+        known_conditions,
+        medications,
+        patient_id,
+      ]
+    );
+
+    const updated = await getQuery("SELECT * FROM patients WHERE patient_id = ?", [patient_id]);
+    return res.json({ success: true, message: "Profile updated successfully.", patient: updated });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: "Failed to update profile." });
+  }
 });
 
 app.post("/api/hdims/patient/verify-aadhaar", async (req, res) => {

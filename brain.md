@@ -826,3 +826,482 @@ LONGITUDINAL DATABASE-BACKED HEALTH TIMELINE
 
 The existing visual design should be preserved wherever practical while making
 the underlying functionality real.
+# 26. Gemini API Performance Optimization
+
+The Gemini API currently responds slowly in MedIntel.
+
+The goal is to reduce perceived and actual AI response time without sacrificing
+medical-report analysis quality.
+
+## A. Do NOT call Gemini unnecessarily
+
+Gemini should only be called when AI analysis is actually required.
+
+Do NOT call Gemini:
+
+- Every time the patient profile loads
+- Every time the dashboard renders
+- Every time the user opens Medical Reports
+- Multiple times for the same report
+- On every React re-render
+- When the same report has already been analyzed
+
+Bad:
+
+Page render
+   ↓
+Gemini API
+   ↓
+Page render
+   ↓
+Gemini API again
+
+Correct:
+
+Report uploaded
+   ↓
+Check database
+   ↓
+Is analysis already available?
+   ├── YES → return stored analysis
+   └── NO → call Gemini once
+
+---
+
+## B. Store AI Analysis
+
+After Gemini analyzes a medical report, save the result in the database.
+
+Example:
+
+medical_reports
+
+- id
+- patient_id
+- file_url
+- report_type
+- report_date
+- ai_analysis
+- ai_status
+- ai_analyzed_at
+- ai_model
+- created_at
+
+Possible ai_status values:
+
+- pending
+- processing
+- completed
+- failed
+
+When the user opens the report later:
+
+Database
+   ↓
+Existing AI analysis?
+   ↓
+YES
+   ↓
+Display immediately
+
+Do NOT call Gemini again.
+
+---
+
+## C. Analyze Asynchronously
+
+Do not make the user wait for the entire Gemini request before the report
+is stored.
+
+Preferred flow:
+
+User uploads report
+        ↓
+Store report in AWS S3
+        ↓
+Store metadata in database
+        ↓
+Set ai_status = "processing"
+        ↓
+Start Gemini analysis
+        ↓
+Save result
+        ↓
+Set ai_status = "completed"
+
+Frontend:
+
+"AI analysis is being prepared..."
+
+Then automatically update the UI when the analysis is available.
+
+---
+
+## D. Show Immediate UI Feedback
+
+Never leave the user staring at a blank loading screen.
+
+Display:
+
+AI Analysis
+────────────
+
+Analyzing your report...
+
+[loading indicator]
+
+This makes the application feel responsive even when the Gemini request takes
+several seconds.
+
+---
+
+## E. Stream Gemini Responses Where Supported
+
+If the current Gemini SDK/model supports streaming, use streaming for long
+responses.
+
+Instead of:
+
+Upload
+↓
+Wait 10 seconds
+↓
+Entire response appears
+
+Prefer:
+
+Upload
+↓
+Gemini starts
+↓
+Text/results progressively appear
+↓
+Final analysis
+
+Streaming improves perceived latency.
+
+Use the official Gemini SDK/API supported by the current project.
+
+Do not implement a fake streaming animation.
+
+---
+
+## F. Reduce Input Size
+
+Do not send unnecessary data to Gemini.
+
+For a medical report:
+
+BAD:
+
+Entire application state
++ patient profile
++ timeline
++ previous reports
++ unnecessary metadata
++ report
++ UI data
+
+GOOD:
+
+Required report content
++
+minimal instructions
++
+necessary context
+
+Only send the information Gemini actually needs.
+
+---
+
+## G. Avoid Duplicate Requests
+
+Implement request protection.
+
+If a report is already being analyzed:
+
+Do not start another Gemini request.
+
+Example logic:
+
+if (report.ai_status === "processing") {
+    return existingAnalysisStatus;
+}
+
+if (report.ai_status === "completed") {
+    return storedAnalysis;
+}
+
+Only call Gemini when:
+
+ai_status === "pending"
+
+---
+
+## H. Use a Faster Model Where Appropriate
+
+Inspect the Gemini model currently being used.
+
+If the application is using a large/high-latency model for every operation,
+evaluate whether a faster Gemini model is sufficient for routine report
+processing.
+
+Use the higher-capability model only when the task actually requires it.
+
+Do not blindly switch models.
+
+Benchmark:
+
+Model
+↓
+Average response time
+↓
+Analysis quality
+↓
+Cost
+↓
+Choose appropriate model
+
+---
+
+## I. Keep Gemini API Key on the Backend
+
+Never expose the Gemini API key in frontend JavaScript.
+
+BAD:
+
+Frontend
+↓
+GEMINI_API_KEY
+↓
+Gemini
+
+Correct:
+
+Frontend
+↓
+MedIntel Backend
+↓
+Gemini API
+
+The API key must remain in backend environment variables/secrets.
+
+Example:
+
+GEMINI_API_KEY=...
+
+Do NOT commit .env files containing real keys to Git.
+
+---
+
+## J. Timeout and Retry
+
+Implement sensible timeout handling.
+
+If Gemini does not respond within the configured timeout:
+
+ai_status = "failed"
+
+Show:
+
+"AI analysis is temporarily unavailable."
+
+Provide:
+
+"Retry Analysis"
+
+Do not automatically retry indefinitely.
+
+Use limited retries with exponential backoff where appropriate.
+
+Example:
+
+Attempt 1
+↓
+wait
+↓
+Attempt 2
+↓
+wait
+↓
+Attempt 3
+↓
+failed
+
+Maximum retry attempts should be limited.
+
+---
+
+## K. Cache Analysis
+
+Use the report identity/content to prevent duplicate analysis.
+
+For example:
+
+report_id
++
+report version/hash
+
+can identify whether a report has already been analyzed.
+
+If the exact same report is uploaded again, avoid unnecessarily sending it to
+Gemini again if the application permits reuse of the previous analysis.
+
+---
+
+## L. Separate AI Processing From Page Loading
+
+The Patient Health Profile must NEVER depend on Gemini.
+
+Patient Profile:
+
+Database
+↓
+Immediate response
+
+Medical Reports:
+
+Database
+↓
+Immediate response
+
+AI Analysis:
+
+Gemini
+↓
+Independent asynchronous process
+
+Therefore:
+
+Gemini slow
+≠
+MedIntel dashboard slow
+
+Gemini unavailable
+≠
+Patient records unavailable
+
+---
+
+## M. Performance Logging
+
+Record Gemini performance metrics on the backend.
+
+For each request record:
+
+- model
+- request start time
+- response time
+- success/failure
+- retry count
+- input size
+- output size
+- report ID
+
+Example:
+
+Gemini Performance
+
+Report: REPORT-1024
+Model: <current model>
+Response Time: 4.8s
+Status: completed
+Retries: 0
+
+This allows us to determine whether the bottleneck is:
+
+- File upload
+- S3 retrieval
+- PDF/image extraction
+- Gemini API
+- Backend processing
+- Database
+- Frontend rendering
+
+---
+
+# 27. Critical Performance Architecture
+
+The application must NOT use this architecture:
+
+User
+ ↓
+Frontend
+ ↓
+Gemini
+ ↓
+Wait
+ ↓
+Database
+ ↓
+UI
+
+Instead use:
+
+                 ┌──→ Database → UI
+                 │
+User → Backend ──┤
+                 │
+                 └──→ S3
+                       │
+                       ↓
+                  AI Processing
+                       │
+                       ↓
+                    Gemini
+                       │
+                       ↓
+                   Database
+                       │
+                       ↓
+                       UI
+
+The core patient-health experience must remain usable even when Gemini is slow.
+
+---
+
+# 28. First Debug Before Optimizing
+
+Before changing the Gemini implementation, measure the actual latency.
+
+Log:
+
+T0 = request received
+T1 = file retrieved
+T2 = file/text extracted
+T3 = Gemini request started
+T4 = first Gemini response/token received
+T5 = Gemini completed
+T6 = database write completed
+T7 = frontend received response
+
+Calculate:
+
+Upload time = T1 - T0
+Extraction time = T2 - T1
+Gemini time = T5 - T3
+Database time = T6 - T5
+Network/frontend time = T7 - T6
+
+Do not assume Gemini itself is the bottleneck until these timings are measured.
+
+---
+
+# 29. Performance Target
+
+Aim for:
+
+Patient profile:
+< 1-2 seconds when backend/database is healthy
+
+Medical report list:
+< 1-2 seconds
+
+Previously analyzed report:
+Near-immediate display from database
+
+New AI analysis:
+Show progress immediately and process asynchronously.
+
+The exact Gemini latency will depend on the model, input size, network,
+region, API load, and report complexity.
