@@ -1,7 +1,7 @@
 /**
  * MedIntel AI – Production Backend Server
  * Image Pipeline: Dual-Pass Sharp Image Pre-Processing + Tesseract.js OCR
- * AI Engine: Groq Llama 3.3 70B (Primary) + Optional Gemini 2.0 Flash Vision
+ * AI Engine: Gemini 2.0 Flash Vision (Primary) + Qwen 3.6 (qwen/qwen3.6-27b)
  */
 
 import express from "express";
@@ -12,7 +12,6 @@ import path from "path";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import pdfParse from "pdf-parse";
@@ -22,6 +21,7 @@ import jwt from "jsonwebtoken";
 import { uploadToS3 } from "./server/s3.js";
 import db, { runQuery, getQuery, allQuery } from "./server/db.js";
 import { authenticateToken, optionalAuthenticateToken, JWT_SECRET } from "./server/authMiddleware.js";
+import { callQwen36 } from "./server/qwen.js";
 
 dotenv.config();
 
@@ -78,17 +78,14 @@ const upload = multer({
 });
 
 // ── AI CLIENTS ───────────────────────────────────────────────────
-const groqApiKey   = process.env.GROQ_API_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
-
-const groq     = groqApiKey   ? new Groq({ apiKey: groqApiKey })          : null;
-const googleAI = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
+const googleAI     = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
 console.log("🚀 MedIntel Backend starting...");
-console.log(`   Groq Llama 3.3 70B     : ${groq     ? "✅ READY" : "⚠️ NO KEY"}`);
-console.log(`   Gemini 2.0 Flash Vision: ${googleAI ? "✅ READY" : "⚠️ OFF (Groq Dual-Pass OCR active)"}`);
-console.log("   Dual-Pass OCR Engine   : Tesseract.js ✅");
-console.log("   Image Processing       : Sharp ✅");
+console.log(`   Gemini 2.0 Flash Vision : ${googleAI ? "✅ READY" : "⚠️ OFF"}`);
+console.log(`   Qwen 3.6 (qwen3.6-27b)  : ✅ READY (OpenRouter API)`);
+console.log("   Dual-Pass OCR Engine    : Tesseract.js ✅");
+console.log("   Image Processing        : Sharp ✅");
 
 // ── INPUT VALIDATION ─────────────────────────────────────────────
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -287,27 +284,13 @@ app.post(
         }
       }
 
-      // ── 2. Groq LPU Ultra-Fast Engine (Primary for Text/PDF or fallback for Images) ──
-      if (!responseText && groq) {
-        const primaryGroqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
-        for (const modelName of primaryGroqModels) {
-          try {
-            console.log(`   ⚡ Calling Groq (${modelName})...`);
-            const groqRes = await groq.chat.completions.create({
-              model: modelName,
-              messages: [{ role: "user", content: promptText }],
-              response_format: { type: "json_object" },
-              max_tokens: 3000,
-              temperature: 0.1,
-            });
-            responseText = groqRes.choices[0]?.message?.content || "";
-            if (responseText) {
-              console.log(`   ✅ Groq success with ${modelName}`);
-              break;
-            }
-          } catch (groqErr) {
-            console.error(`   ⚠️ Groq (${modelName}) failed:`, groqErr.message);
-          }
+      // ── 2. Qwen 3.6 (qwen/qwen3.6-27b) Engine ──
+      if (!responseText) {
+        try {
+          console.log("   ⚡ Calling Qwen 3.6 (qwen/qwen3.6-27b)...");
+          responseText = await callQwen36({ promptText, isJson: true });
+        } catch (qwenErr) {
+          console.error("   ⚠️ Qwen 3.6 failed:", qwenErr.message);
         }
       }
 
@@ -420,23 +403,19 @@ PATIENT REPORT CONTEXT:
       }
     }
 
-    // 2. Fallback Engine: Groq Multi-Model
-    if (!reply && groq) {
-      const groqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"];
-      for (const modelName of groqModels) {
-        try {
-          const r = await groq.chat.completions.create({
-            model: modelName,
-            messages: [
-              { role: "system", content: systemPrompt },
-              ...safeMessages.map(m => ({ role: m.role, content: m.content })),
-            ],
-          });
-          reply = r.choices[0]?.message?.content || "";
-          if (reply) break;
-        } catch (e) {
-          console.error(`Groq chat error (${modelName}):`, e.message);
-        }
+    // 2. Fallback Engine: Qwen 3.6 (qwen/qwen3.6-27b)
+    if (!reply) {
+      try {
+        console.log("   ⚡ Calling Qwen 3.6 chat (qwen/qwen3.6-27b)...");
+        reply = await callQwen36({
+          promptText: "",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...safeMessages,
+          ]
+        });
+      } catch (e) {
+        console.error("   ⚠️ Qwen 3.6 chat error:", e.message);
       }
     }
 

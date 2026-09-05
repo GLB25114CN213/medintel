@@ -3,11 +3,11 @@ import cors from "cors";
 import multer from "multer";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
 import { buildMedicalPrompt } from "../server/prompt.js";
 import { runQuery, getQuery, allQuery } from "../server/db.js";
 import { uploadToS3 } from "../server/s3.js";
+import { callQwen36 } from "../server/qwen.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "medintel-secret-key-2026";
 
@@ -45,12 +45,9 @@ const optionalAuthenticateToken = (req, res, next) => {
 
 function getAiClients() {
   const geminiKey = process.env.GEMINI_API_KEY;
-  const groqKey   = process.env.GROQ_API_KEY;
-
   const googleAI = geminiKey && geminiKey.trim() ? new GoogleGenAI({ apiKey: geminiKey.trim() }) : null;
-  const groq     = groqKey && groqKey.trim() ? new Groq({ apiKey: groqKey.trim() }) : null;
 
-  return { googleAI, groq };
+  return { googleAI };
 }
 
 // ── AUTHENTICATION ENDPOINTS (VERCEL SUPPORT) ─────────────────────
@@ -177,28 +174,14 @@ app.post("/analyze", (req, res) => {
         }
       }
 
-      // 2. Groq LPU Fallback (Sub-second Llama 3.3 / 3.1 inference)
-      if (!responseText && groq) {
-        const primaryGroqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
-        for (const modelName of primaryGroqModels) {
-          try {
-            console.log(`⚡ Fast Groq fallback: ${modelName}...`);
-            const r = await groq.chat.completions.create({
-              model: modelName,
-              messages: [{ role: "user", content: promptText }],
-              response_format: { type: "json_object" },
-              max_tokens: 3000,
-              temperature: 0.1,
-            });
-            responseText = r.choices[0]?.message?.content || "";
-            if (responseText) {
-              console.log(`✅ Groq success with ${modelName}`);
-              break;
-            }
-          } catch (e) {
-            console.error(`Groq error (${modelName}):`, e.message);
-            lastError = `Groq (${modelName}): ${e.message}`;
-          }
+      // 2. Qwen 3.6 (qwen/qwen3.6-27b) Engine Fallback
+      if (!responseText) {
+        try {
+          console.log("⚡ Calling Qwen 3.6 (qwen/qwen3.6-27b)...");
+          responseText = await callQwen36({ promptText, isJson: true });
+        } catch (e) {
+          console.error("Qwen 3.6 error:", e.message);
+          lastError = `Qwen 3.6: ${e.message}`;
         }
       }
 
@@ -284,26 +267,19 @@ PATIENT REPORT:
       }
     }
 
-    // 2. Groq LPU Fallback
-    if (!reply && groq) {
-      const primaryGroqModels = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
-      for (const modelName of primaryGroqModels) {
-        try {
-          console.log(`⚡ Fast Groq chat: ${modelName}...`);
-          const r = await groq.chat.completions.create({
-            model: modelName,
-            messages: [
-              { role: "system", content: systemPrompt },
-              ...safeMessages,
-            ],
-            max_tokens: 1500,
-            temperature: 0.2,
-          });
-          reply = r.choices[0]?.message?.content || "";
-          if (reply) break;
-        } catch (e) {
-          console.error(`Groq chat error (${modelName}):`, e.message);
-        }
+    // 2. Qwen 3.6 (qwen/qwen3.6-27b) Fallback
+    if (!reply) {
+      try {
+        console.log("⚡ Calling Qwen 3.6 chat (qwen/qwen3.6-27b)...");
+        reply = await callQwen36({
+          promptText: "",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...safeMessages,
+          ]
+        });
+      } catch (e) {
+        console.error("Qwen 3.6 chat error:", e.message);
       }
     }
 

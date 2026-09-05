@@ -826,482 +826,701 @@ LONGITUDINAL DATABASE-BACKED HEALTH TIMELINE
 
 The existing visual design should be preserved wherever practical while making
 the underlying functionality real.
-# 26. Gemini API Performance Optimization
+# 26. AI Analysis Performance Optimization
 
-The Gemini API currently responds slowly in MedIntel.
+MedIntel currently uses:
 
-The goal is to reduce perceived and actual AI response time without sacrificing
-medical-report analysis quality.
+AI Provider: Groq
+AI Model: qwen/qwen3.6-27b
 
-## A. Do NOT call Gemini unnecessarily
+The primary objective is to make medical-report analysis as fast and reliable
+as possible while preserving useful analysis quality.
 
-Gemini should only be called when AI analysis is actually required.
+The implementation must optimize for:
+- Low time-to-first-response
+- Low total response latency
+- Small and efficient prompts
+- Minimal unnecessary output
+- No duplicate AI requests
+- Asynchronous processing
+- Efficient image/PDF handling
+- Reliable structured output
 
-Do NOT call Gemini:
+The AI provider must remain replaceable in the architecture, but Qwen 3.6 27B
+should be the primary model used by the current implementation.
 
-- Every time the patient profile loads
-- Every time the dashboard renders
-- Every time the user opens Medical Reports
-- Multiple times for the same report
-- On every React re-render
-- When the same report has already been analyzed
+---
 
-Bad:
+## A. Never Call AI on Page Load
 
-Page render
-   ↓
-Gemini API
-   ↓
-Page render
-   ↓
-Gemini API again
+AI analysis must NEVER be triggered by:
+
+- Patient profile loading
+- Dashboard rendering
+- Opening the Medical Reports page
+- React re-renders
+- Browser refresh
+- Viewing an already analyzed report
+
+AI should only run when a medical report actually requires analysis.
 
 Correct:
 
 Report uploaded
-   ↓
+      ↓
 Check database
-   ↓
-Is analysis already available?
-   ├── YES → return stored analysis
-   └── NO → call Gemini once
+      ↓
+Already analyzed?
+   ├── YES → Return stored analysis
+   └── NO → Start AI analysis
 
 ---
 
-## B. Store AI Analysis
+## B. Store AI Results
 
-After Gemini analyzes a medical report, save the result in the database.
+Every medical report must store its AI processing state.
 
-Example:
-
-medical_reports
+medical_reports:
 
 - id
 - patient_id
-- file_url
+- s3_key
 - report_type
 - report_date
-- ai_analysis
 - ai_status
-- ai_analyzed_at
+- ai_analysis
 - ai_model
+- ai_provider
+- ai_analyzed_at
+- ai_error
+- content_hash
 - created_at
+- updated_at
 
-Possible ai_status values:
+ai_status:
 
 - pending
 - processing
 - completed
 - failed
 
-When the user opens the report later:
+Rules:
 
-Database
-   ↓
-Existing AI analysis?
-   ↓
-YES
-   ↓
-Display immediately
+completed:
+    Return stored analysis.
 
-Do NOT call Gemini again.
+processing:
+    Return processing status.
+
+pending:
+    Start analysis.
+
+failed:
+    Allow controlled retry.
+
+Never analyze an already completed report again unless the user explicitly
+requests re-analysis.
 
 ---
 
-## C. Analyze Asynchronously
+## C. Do Not Make Upload Wait for Qwen
 
-Do not make the user wait for the entire Gemini request before the report
-is stored.
+Medical-report upload must NOT wait for Qwen analysis.
 
-Preferred flow:
+Correct:
 
-User uploads report
+Patient uploads report
         ↓
-Store report in AWS S3
+Backend validates file
         ↓
-Store metadata in database
+Store report in private AWS S3
         ↓
-Set ai_status = "processing"
+Create database record
         ↓
-Start Gemini analysis
+Return upload success immediately
+        ↓
+AI status = pending
+        ↓
+Background Qwen analysis
         ↓
 Save result
         ↓
-Set ai_status = "completed"
+AI status = completed
 
-Frontend:
+The user should immediately see:
 
-"AI analysis is being prepared..."
+Report uploaded successfully
 
-Then automatically update the UI when the analysis is available.
-
----
-
-## D. Show Immediate UI Feedback
-
-Never leave the user staring at a blank loading screen.
-
-Display:
-
-AI Analysis
-────────────
-
-Analyzing your report...
-
-[loading indicator]
-
-This makes the application feel responsive even when the Gemini request takes
-several seconds.
+AI Analysis:
+⏳ Processing...
 
 ---
 
-## E. Stream Gemini Responses Where Supported
+## D. Background AI Processing
 
-If the current Gemini SDK/model supports streaming, use streaming for long
-responses.
+AI analysis should run independently from the main patient request.
 
-Instead of:
+Preferred:
 
-Upload
-↓
-Wait 10 seconds
-↓
-Entire response appears
+Frontend
+   ↓
+Backend
+   ↓
+S3 + Database
+   ↓
+Background AI processing
+   ↓
+Groq
+   ↓
+Qwen 3.6 27B
+   ↓
+Database
+   ↓
+Frontend update
 
-Prefer:
+Do NOT make the patient dashboard dependent on the Qwen API response.
 
-Upload
-↓
-Gemini starts
-↓
-Text/results progressively appear
-↓
-Final analysis
+If Qwen is slow or temporarily unavailable:
 
-Streaming improves perceived latency.
-
-Use the official Gemini SDK/API supported by the current project.
-
-Do not implement a fake streaming animation.
-
----
-
-## F. Reduce Input Size
-
-Do not send unnecessary data to Gemini.
-
-For a medical report:
-
-BAD:
-
-Entire application state
-+ patient profile
-+ timeline
-+ previous reports
-+ unnecessary metadata
-+ report
-+ UI data
-
-GOOD:
-
-Required report content
-+
-minimal instructions
-+
-necessary context
-
-Only send the information Gemini actually needs.
+- Patient profile must still load
+- Medical reports must still load
+- Previously completed analyses must still be visible
+- Upload must still work
 
 ---
 
-## G. Avoid Duplicate Requests
+## E. Prevent Duplicate Requests
 
-Implement request protection.
+Before calling Qwen:
 
-If a report is already being analyzed:
+1. Fetch the report.
+2. Check ai_status.
+3. Check content_hash.
+4. Check whether ai_analysis already exists.
+5. Check whether another analysis request is already running.
 
-Do not start another Gemini request.
+Never allow two Qwen requests for the same report simultaneously.
 
-Example logic:
+Example:
 
-if (report.ai_status === "processing") {
-    return existingAnalysisStatus;
-}
-
-if (report.ai_status === "completed") {
+if (ai_status === "completed") {
     return storedAnalysis;
 }
 
-Only call Gemini when:
+if (ai_status === "processing") {
+    return processingStatus;
+}
 
-ai_status === "pending"
+if (ai_status === "pending") {
+    startAnalysis();
+}
 
----
-
-## H. Use a Faster Model Where Appropriate
-
-Inspect the Gemini model currently being used.
-
-If the application is using a large/high-latency model for every operation,
-evaluate whether a faster Gemini model is sufficient for routine report
-processing.
-
-Use the higher-capability model only when the task actually requires it.
-
-Do not blindly switch models.
-
-Benchmark:
-
-Model
-↓
-Average response time
-↓
-Analysis quality
-↓
-Cost
-↓
-Choose appropriate model
+if (ai_status === "failed") {
+    allowControlledRetry();
+}
 
 ---
 
-## I. Keep Gemini API Key on the Backend
+## F. Analyze Each Report Only Once
 
-Never expose the Gemini API key in frontend JavaScript.
+Generate a content hash for every uploaded report.
 
-BAD:
+Example:
 
+Report
+ ↓
+SHA-256/content hash
+ ↓
+Check database
+ ↓
+Existing analysis?
+ ├── YES → Reuse analysis
+ └── NO → Send to Qwen
+
+If the exact same file has already been analyzed, do not send it to Qwen again.
+
+---
+
+## G. Minimize Qwen Input
+
+Prompt size directly affects processing efficiency.
+
+Send ONLY what Qwen needs.
+
+DO NOT send:
+
+- Entire frontend state
+- Entire patient timeline
+- Unrelated medical reports
+- UI data
+- Complete application state
+- Duplicate report information
+- Large unnecessary instructions
+- Previous AI responses unless required
+- Unnecessary personal information
+
+Send:
+
+- Required report content
+- Required image/page content
+- Minimal necessary patient context
+- Concise analysis instructions
+
+The production medical-analysis prompt should be short and task-specific.
+
+Do NOT send this entire brain.md file to Qwen.
+
+brain.md is a DEVELOPMENT/ARCHITECTURE specification.
+
+It is NOT the runtime medical-analysis prompt.
+
+---
+
+## H. Qwen 3.6 27B Configuration
+
+Use:
+
+Provider:
+Groq
+
+Model:
+qwen/qwen3.6-27b
+
+Keep the model configurable through environment variables.
+
+Example:
+
+GROQ_MODEL=qwen/qwen3.6-27b
+
+Do not hardcode the model name throughout the application.
+
+All Qwen-specific configuration should be centralized.
+
+---
+
+## I. Optimize Qwen for Speed
+
+Use Qwen 3.6 27B in its efficient/non-reasoning mode where supported by the
+current Groq API integration.
+
+Use:
+
+reasoning_effort = "none"
+
+when supported by the installed SDK/API version.
+
+Do NOT enable unnecessary reasoning for routine medical-report extraction.
+
+The task is primarily:
+
+Extract
+→ Structure
+→ Identify abnormalities
+→ Explain simply
+→ Return JSON
+
+Do not ask Qwen to produce long reasoning chains.
+
+---
+
+## J. Keep Output Small
+
+The AI response should be concise and structured.
+
+Do NOT request unnecessarily long explanations.
+
+Use a reasonable maximum completion-token limit based on the actual UI
+requirements.
+
+The response should contain only the information needed by the MedIntel UI.
+
+Preferred:
+
+Structured JSON
+
+rather than:
+
+Long conversational explanation
+
+Example:
+
+{
+  "summary": "...",
+  "findings": [],
+  "abnormal_findings": [],
+  "medications": [],
+  "conditions": [],
+  "follow_up": [],
+  "confidence": "high"
+}
+
+The frontend should render this structured response.
+
+---
+
+## K. Use Structured JSON Output
+
+When supported by the current Groq/Qwen API integration, use JSON Object
+Mode or the appropriate structured-output mechanism.
+
+The model response must be machine-readable.
+
+Do NOT make the frontend parse unpredictable natural-language responses.
+
+Correct:
+
+Qwen
+ ↓
+JSON
+ ↓
+Backend validation
+ ↓
+Database
+ ↓
 Frontend
-↓
-GEMINI_API_KEY
-↓
-Gemini
+
+If Qwen returns malformed output:
+
+1. Do not store it as completed.
+2. Mark analysis as failed or retry according to the retry policy.
+3. Log the safe error reference.
+4. Show a safe user-facing message.
+
+---
+
+## L. Use Vision Efficiently
+
+Qwen 3.6 27B supports image input.
+
+Use image input only when necessary.
+
+For a text-based PDF:
+
+PDF
+ ↓
+Extract useful text
+ ↓
+Send concise text to Qwen
+
+For scanned/image-based reports:
+
+Image
+ ↓
+Qwen vision analysis
+ ↓
+Structured result
+
+Do NOT send unnecessarily large or duplicated images.
+
+If a PDF contains 20 pages but only 2 pages contain the relevant medical
+results, avoid sending irrelevant pages when reliable extraction allows this.
+
+---
+
+## M. Streaming
+
+For background medical-report processing, streaming is NOT required.
+
+The user does not need to watch the entire internal analysis being generated.
+
+Instead:
+
+Report
+ ↓
+Processing
+ ↓
+Completed
+ ↓
+Display stored analysis
+
+For interactive AI responses where streaming is useful and supported, streaming
+may be enabled.
+
+Never implement fake streaming.
+
+---
+
+## N. Keep Groq API Credentials Backend-Only
+
+The Groq API key must NEVER appear in:
+
+- React code
+- HTML
+- Browser JavaScript
+- localStorage
+- URLs
+- Git
+- frontend environment variables exposed to the browser
 
 Correct:
 
 Frontend
-↓
+   ↓
 MedIntel Backend
-↓
-Gemini API
+   ↓
+Groq API
+   ↓
+Qwen 3.6 27B
 
-The API key must remain in backend environment variables/secrets.
+Use backend environment variables or AWS Secrets Manager.
 
 Example:
 
-GEMINI_API_KEY=...
+GROQ_API_KEY=...
 
-Do NOT commit .env files containing real keys to Git.
+Never commit the real key.
 
 ---
 
-## J. Timeout and Retry
+## O. Timeout and Retry
 
-Implement sensible timeout handling.
+Set a reasonable timeout for Groq requests.
 
-If Gemini does not respond within the configured timeout:
+If Qwen fails:
 
-ai_status = "failed"
+ai_status = failed
 
-Show:
+The frontend should show:
 
 "AI analysis is temporarily unavailable."
 
 Provide:
 
-"Retry Analysis"
+[Retry Analysis]
 
-Do not automatically retry indefinitely.
+Use limited retries with exponential backoff.
 
-Use limited retries with exponential backoff where appropriate.
+Never retry indefinitely.
 
-Example:
-
-Attempt 1
-↓
-wait
-↓
-Attempt 2
-↓
-wait
-↓
-Attempt 3
-↓
-failed
-
-Maximum retry attempts should be limited.
+Do not repeatedly retry requests caused by invalid input or invalid files.
 
 ---
 
-## K. Cache Analysis
+# 27. AI Provider Abstraction
 
-Use the report identity/content to prevent duplicate analysis.
+Although Groq + Qwen 3.6 27B is the current production model, the application
+must remain provider-independent.
 
-For example:
+Use:
 
-report_id
-+
-report version/hash
-
-can identify whether a report has already been analyzed.
-
-If the exact same report is uploaded again, avoid unnecessarily sending it to
-Gemini again if the application permits reuse of the previous analysis.
-
----
-
-## L. Separate AI Processing From Page Loading
-
-The Patient Health Profile must NEVER depend on Gemini.
-
-Patient Profile:
-
-Database
-↓
-Immediate response
-
-Medical Reports:
-
-Database
-↓
-Immediate response
-
-AI Analysis:
-
-Gemini
-↓
-Independent asynchronous process
-
-Therefore:
-
-Gemini slow
-≠
-MedIntel dashboard slow
-
-Gemini unavailable
-≠
-Patient records unavailable
-
----
-
-## M. Performance Logging
-
-Record Gemini performance metrics on the backend.
-
-For each request record:
-
-- model
-- request start time
-- response time
-- success/failure
-- retry count
-- input size
-- output size
-- report ID
-
-Example:
-
-Gemini Performance
-
-Report: REPORT-1024
-Model: <current model>
-Response Time: 4.8s
-Status: completed
-Retries: 0
-
-This allows us to determine whether the bottleneck is:
-
-- File upload
-- S3 retrieval
-- PDF/image extraction
-- Gemini API
-- Backend processing
-- Database
-- Frontend rendering
-
----
-
-# 27. Critical Performance Architecture
-
-The application must NOT use this architecture:
-
-User
- ↓
 Frontend
  ↓
-Gemini
+Backend
  ↓
-Wait
+AI Analysis Service
  ↓
-Database
+Provider Adapter
  ↓
-UI
+Groq
+ ↓
+Qwen 3.6 27B
 
-Instead use:
+Example conceptual interface:
 
-                 ┌──→ Database → UI
-                 │
-User → Backend ──┤
-                 │
-                 └──→ S3
-                       │
-                       ↓
-                  AI Processing
-                       │
-                       ↓
-                    Gemini
-                       │
-                       ↓
-                   Database
-                       │
-                       ↓
-                       UI
+analyzeMedicalReport(report)
 
-The core patient-health experience must remain usable even when Gemini is slow.
+The rest of MedIntel should NOT need to know the provider-specific API details.
+
+Keep provider/model configuration centralized:
+
+AI_PROVIDER=groq
+AI_MODEL=qwen/qwen3.6-27b
+
+This allows future migration without rewriting MedIntel.
 
 ---
 
-# 28. First Debug Before Optimizing
+# 28. Measure Actual Latency
 
-Before changing the Gemini implementation, measure the actual latency.
+Do NOT assume Qwen is the bottleneck.
 
-Log:
+Measure every stage.
+
+Record:
 
 T0 = request received
-T1 = file retrieved
-T2 = file/text extracted
-T3 = Gemini request started
-T4 = first Gemini response/token received
-T5 = Gemini completed
-T6 = database write completed
-T7 = frontend received response
+T1 = S3 retrieval started
+T2 = S3 retrieval completed
+T3 = file/text extraction started
+T4 = extraction completed
+T5 = Groq request started
+T6 = first Qwen response received
+T7 = Qwen response completed
+T8 = database write completed
 
 Calculate:
 
-Upload time = T1 - T0
-Extraction time = T2 - T1
-Gemini time = T5 - T3
-Database time = T6 - T5
-Network/frontend time = T7 - T6
+File retrieval:
+T2 - T1
 
-Do not assume Gemini itself is the bottleneck until these timings are measured.
+Extraction:
+T4 - T3
+
+Qwen first-response latency:
+T6 - T5
+
+Qwen total latency:
+T7 - T5
+
+Database write:
+T8 - T7
+
+Total processing:
+T8 - T0
+
+This determines whether the actual bottleneck is:
+
+- S3
+- PDF extraction
+- OCR
+- Image processing
+- Network
+- Groq
+- Qwen
+- Database
+- Backend
+- Frontend
 
 ---
 
-# 29. Performance Target
+# 29. AI Performance Logging
 
-Aim for:
+For every AI analysis record:
 
-Patient profile:
-< 1-2 seconds when backend/database is healthy
+- report_id
+- provider
+- model
+- request_started_at
+- first_response_at
+- completed_at
+- total_latency
+- input_size
+- output_size
+- retry_count
+- status
+- error_reference
 
-Medical report list:
-< 1-2 seconds
+Example:
+
+AI Analysis
+
+Report: REPORT-1024
+Provider: Groq
+Model: qwen/qwen3.6-27b
+First Response: 1.7s
+Total Processing: 4.8s
+Status: completed
+Retries: 0
+
+NEVER log:
+
+- Groq API keys
+- Passwords
+- Full medical reports
+- Sensitive patient information unnecessarily
+
+---
+
+# 30. Frontend Experience
+
+The frontend must immediately display the uploaded report.
+
+Example:
+
+Medical Report
+Blood Test
+20 Aug 2026
+
+AI Analysis
+⏳ Processing...
+
+After completion:
+
+AI Analysis
+✓ Completed
+
+If failed:
+
+AI Analysis
+⚠ Temporarily unavailable
+
+[Retry Analysis]
+
+The patient must never be forced to wait on a blank screen.
+
+---
+
+# 31. Critical Architecture
+
+Use:
+
+                    PATIENT
+                       ↓
+                    FRONTEND
+                       ↓
+                   BACKEND API
+                       ↓
+          ┌────────────┼────────────┐
+          ↓            ↓            ↓
+      DATABASE        S3       AI SERVICE
+          ↓            ↓            ↓
+      Metadata      Reports        Groq
+                                    ↓
+                              Qwen 3.6 27B
+                                    ↓
+                                 Analysis
+                                    ↓
+                                 DATABASE
+                                    ↓
+                                 FRONTEND
+
+The database is the source of truth for stored AI results.
+
+AWS S3 is the private document-storage layer.
+
+Groq is the AI API provider.
+
+Qwen 3.6 27B is the current AI model.
+
+The AI provider must never become the source of truth for patient records.
+
+---
+
+# 32. Performance Targets
+
+Target:
+
+Patient Profile:
+< 1–2 seconds under normal backend/database conditions
+
+Medical Report List:
+< 1–2 seconds
 
 Previously analyzed report:
-Near-immediate display from database
+Near-immediate database response
+
+New report upload:
+Return success without waiting for Qwen
 
 New AI analysis:
-Show progress immediately and process asynchronously.
+Immediately show "Processing..."
 
-The exact Gemini latency will depend on the model, input size, network,
-region, API load, and report complexity.
+AI failure:
+Patient records remain accessible
+
+Optimize for low latency without sacrificing reliable extraction of medical
+information.
+
+Do NOT sacrifice accuracy merely to achieve a lower response time.
+
+The exact latency depends on:
+
+- Qwen model load
+- Groq infrastructure
+- Input size
+- Output size
+- Network
+- PDF complexity
+- Image resolution
+- OCR/extraction
+- Backend processing
